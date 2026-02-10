@@ -3,55 +3,13 @@ import Carbon.HIToolbox
 import Cocoa
 import CoreAudio
 
-// MARK: - Set preferred input device via CoreAudio
-
-func setPreferredInputDevice(uid: String) {
-    var address = AudioObjectPropertyAddress(
-        mSelector: kAudioHardwarePropertyDevices,
-        mScope: kAudioObjectPropertyScopeGlobal,
-        mElement: kAudioObjectPropertyElementMain
-    )
-
-    var dataSize: UInt32 = 0
-    AudioObjectGetPropertyDataSize(
-        AudioObjectID(kAudioObjectSystemObject), &address, 0, nil, &dataSize)
-    let deviceCount = Int(dataSize) / MemoryLayout<AudioDeviceID>.size
-    var devices = [AudioDeviceID](repeating: 0, count: deviceCount)
-    AudioObjectGetPropertyData(
-        AudioObjectID(kAudioObjectSystemObject), &address, 0, nil, &dataSize, &devices)
-
-    for device in devices {
-        var uidAddress = AudioObjectPropertyAddress(
-            mSelector: kAudioDevicePropertyDeviceUID,
-            mScope: kAudioObjectPropertyScopeGlobal,
-            mElement: kAudioObjectPropertyElementMain
-        )
-        var cfUID: CFString = "" as CFString
-        var uidSize = UInt32(MemoryLayout<CFString>.size)
-        AudioObjectGetPropertyData(device, &uidAddress, 0, nil, &uidSize, &cfUID)
-
-        if (cfUID as String) == uid {
-            var defaultAddress = AudioObjectPropertyAddress(
-                mSelector: kAudioHardwarePropertyDefaultInputDevice,
-                mScope: kAudioObjectPropertyScopeGlobal,
-                mElement: kAudioObjectPropertyElementMain
-            )
-            var deviceID = device
-            AudioObjectSetPropertyData(
-                AudioObjectID(kAudioObjectSystemObject), &defaultAddress, 0, nil,
-                UInt32(MemoryLayout<AudioDeviceID>.size), &deviceID)
-            break
-        }
-    }
-}
-
 // MARK: - App Delegate
 
 class AppDelegate: NSObject, NSApplicationDelegate {
     enum DictationState {
         case idle
         case recording
-        case transcribing
+        case processing  // compression + transcription
     }
 
     private var state: DictationState = .idle
@@ -62,19 +20,18 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     private var localMonitor: Any?
     private var setupWindow: SetupWindow?
     private var rightCommandDown = false
-    private var targetApp: NSRunningApplication?  // app that was active before recording
+    private var targetApp: NSRunningApplication?
+    private var currentTask: URLSessionDataTask?
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         buildAppMenu()
         buildMenuBar()
 
         if Config.hasAPIKey {
-            // Returning user — request permissions silently, then go
             requestPermissionsIfNeeded()
             applyConfig()
             registerHotkey()
         } else {
-            // New user — show settings first, permissions come after
             showSetup(isOnboarding: true)
         }
     }
@@ -83,32 +40,24 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         if let config = Config.load() {
             recorder.inputGain = config.inputGain
             if let micUID = config.micUID {
-                setPreferredInputDevice(uid: micUID)
+                AudioDeviceHelper.setPreferredInput(uid: micUID)
             }
         }
     }
 
-    // MARK: - Permissions
+    // MARK: - Permissions (sequential: mic → accessibility)
 
-    /// Request permissions sequentially: mic first, then accessibility.
-    /// Called after settings are saved (onboarding) or on launch (returning user).
     private func requestPermissionsIfNeeded() {
         switch AVCaptureDevice.authorizationStatus(for: .audio) {
         case .authorized:
-            // Mic already granted — check accessibility
             requestAccessibilityIfNeeded()
         case .notDetermined:
-            // Ask for mic — when granted, chain to accessibility
             AVCaptureDevice.requestAccess(for: .audio) { [weak self] granted in
                 DispatchQueue.main.async {
-                    if granted {
-                        self?.requestAccessibilityIfNeeded()
-                    }
-                    // If denied, they can still grant later in System Settings
+                    if granted { self?.requestAccessibilityIfNeeded() }
                 }
             }
         case .denied, .restricted:
-            // Already denied — still check accessibility
             requestAccessibilityIfNeeded()
         @unknown default:
             requestAccessibilityIfNeeded()
@@ -122,35 +71,49 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         }
     }
 
-    // MARK: - App Menu (needed for Cmd+C/V/X/A in text fields)
+    // MARK: - App Menu (enables Cmd+C/V/X/A in text fields for LSUIElement apps)
 
     private func buildAppMenu() {
         let mainMenu = NSMenu()
 
-        // App menu (hidden but needed)
         let appMenuItem = NSMenuItem()
         let appMenu = NSMenu()
-        appMenu.addItem(NSMenuItem(title: "Quit GroqDictate", action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q"))
+        appMenu.addItem(
+            NSMenuItem(
+                title: "Quit GroqDictate", action: #selector(NSApplication.terminate(_:)),
+                keyEquivalent: "q"))
         appMenuItem.submenu = appMenu
         mainMenu.addItem(appMenuItem)
 
-        // Edit menu — enables Cmd+C/V/X/A/Z in text fields
         let editMenuItem = NSMenuItem()
         let editMenu = NSMenu(title: "Edit")
-        editMenu.addItem(NSMenuItem(title: "Undo", action: Selector(("undo:")), keyEquivalent: "z"))
-        editMenu.addItem(NSMenuItem(title: "Redo", action: Selector(("redo:")), keyEquivalent: "Z"))
+        editMenu.addItem(
+            NSMenuItem(
+                title: "Undo", action: #selector(UndoManager.undo), keyEquivalent: "z"))
+        editMenu.addItem(
+            NSMenuItem(
+                title: "Redo", action: #selector(UndoManager.redo), keyEquivalent: "Z"))
         editMenu.addItem(NSMenuItem.separator())
-        editMenu.addItem(NSMenuItem(title: "Cut", action: #selector(NSText.cut(_:)), keyEquivalent: "x"))
-        editMenu.addItem(NSMenuItem(title: "Copy", action: #selector(NSText.copy(_:)), keyEquivalent: "c"))
-        editMenu.addItem(NSMenuItem(title: "Paste", action: #selector(NSText.paste(_:)), keyEquivalent: "v"))
-        editMenu.addItem(NSMenuItem(title: "Select All", action: #selector(NSText.selectAll(_:)), keyEquivalent: "a"))
+        editMenu.addItem(
+            NSMenuItem(
+                title: "Cut", action: #selector(NSText.cut(_:)), keyEquivalent: "x"))
+        editMenu.addItem(
+            NSMenuItem(
+                title: "Copy", action: #selector(NSText.copy(_:)), keyEquivalent: "c"))
+        editMenu.addItem(
+            NSMenuItem(
+                title: "Paste", action: #selector(NSText.paste(_:)), keyEquivalent: "v"))
+        editMenu.addItem(
+            NSMenuItem(
+                title: "Select All", action: #selector(NSText.selectAll(_:)),
+                keyEquivalent: "a"))
         editMenuItem.submenu = editMenu
         mainMenu.addItem(editMenuItem)
 
         NSApp.mainMenu = mainMenu
     }
 
-    // MARK: - Menu Bar
+    // MARK: - Status Bar Menu
 
     private func buildMenuBar() {
         statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.squareLength)
@@ -163,7 +126,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         menu.addItem(
             NSMenuItem(title: "Right ⌘ — start / stop", action: nil, keyEquivalent: ""))
         menu.addItem(
-            NSMenuItem(title: "Esc — cancel recording", action: nil, keyEquivalent: ""))
+            NSMenuItem(title: "Esc — cancel", action: nil, keyEquivalent: ""))
         menu.addItem(NSMenuItem.separator())
         menu.addItem(
             NSMenuItem(
@@ -177,14 +140,13 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         statusItem.menu = menu
     }
 
-    // MARK: - Setup
+    // MARK: - Settings
 
     @objc private func showSetupFromMenu() {
         showSetup()
     }
 
     private func showSetup(isOnboarding: Bool = false) {
-        // Capture the frontmost app BEFORE we activate ourselves
         let previousApp = NSWorkspace.shared.frontmostApplication
         let window = SetupWindow(previousApp: previousApp)
         window.onComplete = { [weak self] in
@@ -192,7 +154,6 @@ class AppDelegate: NSObject, NSApplicationDelegate {
             self?.applyConfig()
             self?.registerHotkey()
             if isOnboarding {
-                // Ask for permissions after settings are saved, one at a time
                 self?.requestPermissionsIfNeeded()
             }
         }
@@ -201,7 +162,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         setupWindow = window
     }
 
-    // MARK: - Global Hotkey
+    // MARK: - Hotkey (Right ⌘ to toggle, Esc to cancel)
 
     private func registerHotkey() {
         if let m = globalMonitor { NSEvent.removeMonitor(m); globalMonitor = nil }
@@ -220,9 +181,10 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     private func handleEvent(_ event: NSEvent) {
+        // Esc cancels recording or processing
         if event.type == .keyDown && event.keyCode == 53 {
-            if state == .recording {
-                DispatchQueue.main.async { [weak self] in self?.cancelRecording() }
+            if state == .recording || state == .processing {
+                DispatchQueue.main.async { [weak self] in self?.cancel() }
             }
             return
         }
@@ -244,12 +206,13 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         switch state {
         case .idle: startRecording()
         case .recording: stopAndTranscribe()
-        case .transcribing: break
+        case .processing: break  // wait for completion
         }
     }
 
     private func startRecording() {
-        // Remember the app the user is dictating into
+        guard state == .idle else { return }
+
         targetApp = NSWorkspace.shared.frontmostApplication
 
         if let config = Config.load() {
@@ -259,91 +222,142 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         do {
             panel.waveformView.setRecording()
             panel.show()
-
             try recorder.start { [weak self] level in
                 self?.panel.waveformView.pushLevel(CGFloat(level))
             }
             state = .recording
         } catch {
-            showError("Mic error: \(error.localizedDescription)")
+            panel.waveformView.showError("Mic error")
+            panel.show()
+            autoDismissPanel()
         }
     }
 
-    private func cancelRecording() {
-        _ = recorder.stop()
+    private func cancel() {
+        currentTask?.cancel()
+        currentTask = nil
+
+        if state == .recording {
+            recorder.stop { _ in }  // discard result
+        }
         recorder.cleanup()
         state = .idle
         panel.dismiss()
     }
 
     private func stopAndTranscribe() {
+        guard state == .recording else { return }
         guard let config = Config.load() else {
-            showError("No API key — open Settings")
-            cancelRecording()
+            panel.waveformView.showError("No API key")
+            autoDismissPanel()
+            state = .idle
             return
         }
 
-        // Stop recording — this also converts WAV→FLAC for smaller upload
-        let fileURL = recorder.stop()
-        state = .transcribing
+        state = .processing
         panel.waveformView.setProcessing()
 
-        GroqAPI.transcribe(fileURL: fileURL, config: config) { [weak self] result in
-            DispatchQueue.main.async {
-                guard let self = self else { return }
-                self.recorder.cleanup()
+        // Async: stop recording → compress → upload → paste
+        recorder.stop { [weak self] fileURL in
+            guard let self = self, self.state == .processing else { return }
 
-                switch result {
-                case .success(let text):
-                    // 1) Copy to clipboard
-                    NSPasteboard.general.clearContents()
-                    NSPasteboard.general.setString(text, forType: .string)
+            GroqAPI.transcribe(fileURL: fileURL, config: config) { [weak self] result in
+                DispatchQueue.main.async {
+                    guard let self = self else { return }
+                    self.recorder.cleanup()
+                    self.currentTask = nil
 
-                    // 2) Dismiss panel
-                    self.panel.dismiss()
-                    self.state = .idle
+                    switch result {
+                    case .success(let text):
+                        NSPasteboard.general.clearContents()
+                        NSPasteboard.general.setString(text, forType: .string)
 
-                    // 3) Reactivate the target app, then paste
-                    if let app = self.targetApp {
-                        app.activate()
+                        self.panel.dismiss()
+                        self.state = .idle
+
+                        // Reactivate the target app, then paste
+                        if let app = self.targetApp, !app.isTerminated {
+                            app.activate()
+                        }
+                        DispatchQueue.main.asyncAfter(deadline: .now() + 0.15) {
+                            self.simulatePaste()
+                        }
+
+                    case .failure(let error):
+                        let msg = String(error.localizedDescription.prefix(50))
+                        self.panel.waveformView.showError(msg)
+                        self.autoDismissPanel()
+                        self.state = .idle
                     }
-                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.15) {
-                        self.simulatePaste()
-                    }
-
-                case .failure(let error):
-                    let msg = String(error.localizedDescription.prefix(60))
-                    self.showError(msg)
-                    self.state = .idle
                 }
             }
         }
     }
 
-    private func showError(_ message: String) {
-        panel.waveformView.setIdle()
-        panel.show()
+    private func autoDismissPanel() {
         DispatchQueue.main.asyncAfter(deadline: .now() + 3) { [weak self] in
             self?.panel.dismiss()
         }
     }
 
+    /// Simulate Cmd+V. Requires Accessibility permission; silently no-ops if not granted.
     private func simulatePaste() {
-        // Simulate Cmd+V via CGEvent.
-        // Requires Accessibility permission — if not granted, this silently does nothing
-        // and the text remains on the clipboard for manual Cmd+V.
         let source = CGEventSource(stateID: .combinedSessionState)
         source?.setLocalEventsFilterDuringSuppressionState(
             [.permitLocalMouseEvents, .permitSystemDefinedEvents],
             state: .eventSuppressionStateSuppressionInterval
         )
-        let vKey = CGKeyCode(0x09)  // V key
+        let vKey = CGKeyCode(0x09)
         let keyDown = CGEvent(keyboardEventSource: source, virtualKey: vKey, keyDown: true)
         let keyUp = CGEvent(keyboardEventSource: source, virtualKey: vKey, keyDown: false)
         keyDown?.flags = .maskCommand
         keyUp?.flags = .maskCommand
         keyDown?.post(tap: .cgAnnotatedSessionEventTap)
         keyUp?.post(tap: .cgAnnotatedSessionEventTap)
+    }
+}
+
+// MARK: - Audio Device Helper
+
+enum AudioDeviceHelper {
+    static func setPreferredInput(uid: String) {
+        var address = AudioObjectPropertyAddress(
+            mSelector: kAudioHardwarePropertyDevices,
+            mScope: kAudioObjectPropertyScopeGlobal,
+            mElement: kAudioObjectPropertyElementMain
+        )
+
+        var dataSize: UInt32 = 0
+        AudioObjectGetPropertyDataSize(
+            AudioObjectID(kAudioObjectSystemObject), &address, 0, nil, &dataSize)
+        let deviceCount = Int(dataSize) / MemoryLayout<AudioDeviceID>.size
+        var devices = [AudioDeviceID](repeating: 0, count: deviceCount)
+        AudioObjectGetPropertyData(
+            AudioObjectID(kAudioObjectSystemObject), &address, 0, nil, &dataSize, &devices)
+
+        for device in devices {
+            var uidAddress = AudioObjectPropertyAddress(
+                mSelector: kAudioDevicePropertyDeviceUID,
+                mScope: kAudioObjectPropertyScopeGlobal,
+                mElement: kAudioObjectPropertyElementMain
+            )
+            var cfUID: CFString = "" as CFString
+            var uidSize = UInt32(MemoryLayout<CFString>.size)
+            AudioObjectGetPropertyData(device, &uidAddress, 0, nil, &uidSize, &cfUID)
+
+            if (cfUID as String) == uid {
+                var defaultAddress = AudioObjectPropertyAddress(
+                    mSelector: kAudioHardwarePropertyDefaultInputDevice,
+                    mScope: kAudioObjectPropertyScopeGlobal,
+                    mElement: kAudioObjectPropertyElementMain
+                )
+                var deviceID = device
+                AudioObjectSetPropertyData(
+                    AudioObjectID(kAudioObjectSystemObject), &defaultAddress, 0, nil,
+                    UInt32(MemoryLayout<AudioDeviceID>.size), &deviceID)
+                break
+            }
+        }
     }
 }
 

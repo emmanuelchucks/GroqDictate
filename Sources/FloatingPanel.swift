@@ -1,6 +1,6 @@
 import Cocoa
 
-// MARK: - Floating HUD Panel (Superwhisper-style)
+// MARK: - Floating HUD Panel
 
 class FloatingPanel: NSPanel {
     let waveformView: WaveformView
@@ -36,28 +36,27 @@ class FloatingPanel: NSPanel {
 
     func dismiss() {
         waveformView.stopAnimating()
+        waveformView.setIdle()
         orderOut(nil)
     }
 }
 
-// MARK: - Waveform View (draws the live audio visualizer)
+// MARK: - Waveform View
 
 class WaveformView: NSView {
     enum DisplayState {
-        case idle           // flat line
-        case recording      // live waveform from mic levels
-        case processing     // sweeping fill animation
+        case idle
+        case recording
+        case processing
+        case error(String)
     }
 
     private(set) var displayState: DisplayState = .idle
 
-    // Waveform data: array of bar heights (0.0 to 1.0)
     private var barHeights: [CGFloat] = Array(repeating: 0, count: 48)
     private let barCount = 48
-    private var displayLink: CVDisplayLink?
     private var animTimer: Timer?
 
-    // Processing animation state
     private var processingProgress: CGFloat = 0
     private var processingForward = true
 
@@ -68,7 +67,7 @@ class WaveformView: NSView {
         layer?.backgroundColor = NSColor(white: 0.08, alpha: 0.94).cgColor
     }
 
-    required init?(coder: NSCoder) { fatalError() }
+    required init?(coder: NSCoder) { fatalError("Not supported") }
 
     func setRecording() {
         displayState = .recording
@@ -90,10 +89,14 @@ class WaveformView: NSView {
         needsDisplay = true
     }
 
-    /// Push a new audio level sample (0.0 to 1.0) while recording
+    func showError(_ message: String) {
+        displayState = .error(message)
+        stopAnimating()
+        needsDisplay = true
+    }
+
     func pushLevel(_ level: CGFloat) {
-        guard displayState == .recording else { return }
-        // Shift bars left, add new on the right
+        guard case .recording = displayState else { return }
         barHeights.removeFirst()
         barHeights.append(level)
     }
@@ -103,8 +106,7 @@ class WaveformView: NSView {
         animTimer = Timer.scheduledTimer(withTimeInterval: 1.0 / 30.0, repeats: true) {
             [weak self] _ in
             guard let self = self else { return }
-            if self.displayState == .processing {
-                // Sweep animation
+            if case .processing = self.displayState {
                 if self.processingForward {
                     self.processingProgress += 0.015
                     if self.processingProgress >= 1.0 {
@@ -136,7 +138,8 @@ class WaveformView: NSView {
 
         // Background
         ctx.setFillColor(NSColor(white: 0.08, alpha: 0.94).cgColor)
-        let bgPath = CGPath(roundedRect: bounds, cornerWidth: 16, cornerHeight: 16, transform: nil)
+        let bgPath = CGPath(
+            roundedRect: bounds, cornerWidth: 16, cornerHeight: 16, transform: nil)
         ctx.addPath(bgPath)
         ctx.fillPath()
 
@@ -152,9 +155,11 @@ class WaveformView: NSView {
             drawWaveformBars(in: waveArea, ctx: ctx)
         case .processing:
             drawProcessingAnimation(in: waveArea, ctx: ctx)
+        case .error(let message):
+            drawError(message, in: waveArea, ctx: ctx)
         }
 
-        // Status text
+        // Status label
         let statusText: String
         let statusColor: NSColor
         switch displayState {
@@ -163,10 +168,13 @@ class WaveformView: NSView {
             statusColor = .clear
         case .recording:
             statusText = "● Recording"
-            statusColor = NSColor.systemRed
+            statusColor = .systemRed
         case .processing:
-            statusText = "⟳ Transcribing..."
-            statusColor = NSColor.systemOrange
+            statusText = "⟳ Transcribing…"
+            statusColor = .systemOrange
+        case .error:
+            statusText = "⚠ Error"
+            statusColor = .systemRed
         }
 
         if !statusText.isEmpty {
@@ -174,81 +182,73 @@ class WaveformView: NSView {
                 .font: NSFont.systemFont(ofSize: 11, weight: .medium),
                 .foregroundColor: statusColor,
             ]
-            let str = NSAttributedString(string: statusText, attributes: attrs)
-            str.draw(at: NSPoint(x: 16, y: 8))
+            NSAttributedString(string: statusText, attributes: attrs)
+                .draw(at: NSPoint(x: 16, y: 8))
         }
 
         // Esc hint
-        let hintAttrs: [NSAttributedString.Key: Any] = [
-            .font: NSFont.systemFont(ofSize: 10, weight: .regular),
-            .foregroundColor: NSColor(white: 0.5, alpha: 1),
-        ]
-        let hint = NSAttributedString(string: "esc to cancel", attributes: hintAttrs)
-        let hintSize = hint.size()
-        hint.draw(at: NSPoint(x: bounds.width - hintSize.width - 16, y: 8))
+        if case .error = displayState {
+            // no hint for errors
+        } else {
+            let hintAttrs: [NSAttributedString.Key: Any] = [
+                .font: NSFont.systemFont(ofSize: 10),
+                .foregroundColor: NSColor(white: 0.5, alpha: 1),
+            ]
+            let hint = NSAttributedString(string: "esc to cancel", attributes: hintAttrs)
+            let hintSize = hint.size()
+            hint.draw(at: NSPoint(x: bounds.width - hintSize.width - 16, y: 8))
+        }
     }
+
+    // MARK: - Drawing States
 
     private func drawIdleLine(in rect: NSRect, ctx: CGContext) {
         ctx.setStrokeColor(NSColor(white: 0.3, alpha: 1).cgColor)
         ctx.setLineWidth(1)
-        let y = rect.midY
-        ctx.move(to: CGPoint(x: rect.minX, y: y))
-        ctx.addLine(to: CGPoint(x: rect.maxX, y: y))
+        ctx.move(to: CGPoint(x: rect.minX, y: rect.midY))
+        ctx.addLine(to: CGPoint(x: rect.maxX, y: rect.midY))
         ctx.strokePath()
     }
 
     private func drawWaveformBars(in rect: NSRect, ctx: CGContext) {
-        let barWidth: CGFloat = rect.width / CGFloat(barCount)
+        let barWidth = rect.width / CGFloat(barCount)
         let barGap: CGFloat = 1.5
-        let maxBarHeight = rect.height
         let centerY = rect.midY
 
         for i in 0..<barCount {
             let h = barHeights[i]
-            // Minimum visible bar height so it never fully disappears
-            let barH = max(CGFloat(h) * maxBarHeight, 2)
+            let barH = max(CGFloat(h) * rect.height, 2)
             let x = rect.minX + CGFloat(i) * barWidth
-
-            // Color: white with slight opacity variation based on height
             let alpha = 0.5 + CGFloat(h) * 0.5
+
             ctx.setFillColor(NSColor(white: 1, alpha: alpha).cgColor)
 
             let barRect = CGRect(
-                x: x + barGap / 2,
-                y: centerY - barH / 2,
-                width: barWidth - barGap,
-                height: barH
+                x: x + barGap / 2, y: centerY - barH / 2,
+                width: barWidth - barGap, height: barH
             )
-            let barPath = CGPath(
-                roundedRect: barRect,
-                cornerWidth: (barWidth - barGap) / 2,
-                cornerHeight: min(barH / 2, (barWidth - barGap) / 2),
-                transform: nil
-            )
-            ctx.addPath(barPath)
+            let r = min((barWidth - barGap) / 2, barH / 2)
+            ctx.addPath(
+                CGPath(roundedRect: barRect, cornerWidth: r, cornerHeight: r, transform: nil))
             ctx.fillPath()
         }
     }
 
     private func drawProcessingAnimation(in rect: NSRect, ctx: CGContext) {
-        let barWidth: CGFloat = rect.width / CGFloat(barCount)
+        let barWidth = rect.width / CGFloat(barCount)
         let barGap: CGFloat = 1.5
-        let maxBarHeight = rect.height
         let centerY = rect.midY
 
         for i in 0..<barCount {
             let x = rect.minX + CGFloat(i) * barWidth
             let barFraction = CGFloat(i) / CGFloat(barCount)
 
-            // Generate a pseudo-random but stable height for each bar
             let seed = sin(Double(i) * 1.7 + 0.5) * 0.5 + 0.5
-            let barH = CGFloat(seed) * maxBarHeight * 0.7 + maxBarHeight * 0.1
+            let barH = CGFloat(seed) * rect.height * 0.7 + rect.height * 0.1
 
-            // Color fill progress: bars up to processingProgress are lit
             let lit = barFraction <= processingProgress
             let color: NSColor
             if lit {
-                // White with slight shimmer
                 let shimmer = sin(Double(i) * 0.4 + processingProgress * 8) * 0.15 + 0.85
                 color = NSColor(white: CGFloat(shimmer), alpha: 0.9)
             } else {
@@ -257,19 +257,25 @@ class WaveformView: NSView {
 
             ctx.setFillColor(color.cgColor)
             let barRect = CGRect(
-                x: x + barGap / 2,
-                y: centerY - barH / 2,
-                width: barWidth - barGap,
-                height: barH
+                x: x + barGap / 2, y: centerY - barH / 2,
+                width: barWidth - barGap, height: barH
             )
-            let barPath = CGPath(
-                roundedRect: barRect,
-                cornerWidth: (barWidth - barGap) / 2,
-                cornerHeight: min(barH / 2, (barWidth - barGap) / 2),
-                transform: nil
-            )
-            ctx.addPath(barPath)
+            let r = min((barWidth - barGap) / 2, barH / 2)
+            ctx.addPath(
+                CGPath(roundedRect: barRect, cornerWidth: r, cornerHeight: r, transform: nil))
             ctx.fillPath()
         }
+    }
+
+    private func drawError(_ message: String, in rect: NSRect, ctx: CGContext) {
+        let attrs: [NSAttributedString.Key: Any] = [
+            .font: NSFont.systemFont(ofSize: 12, weight: .medium),
+            .foregroundColor: NSColor.systemRed.withAlphaComponent(0.9),
+        ]
+        let str = NSAttributedString(string: message, attributes: attrs)
+        let size = str.size()
+        let x = rect.midX - size.width / 2
+        let y = rect.midY - size.height / 2
+        str.draw(at: NSPoint(x: x, y: y))
     }
 }

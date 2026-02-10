@@ -1,20 +1,38 @@
 import Foundation
 
 enum GroqAPI {
+    private static let session = URLSession(configuration: .ephemeral)
+    private static let maxFileSize = 25 * 1024 * 1024  // 25MB Groq limit
+
     static func transcribe(
         fileURL: URL,
         config: Config,
         completion: @escaping (Result<String, Error>) -> Void
     ) {
-        guard let apiURL = URL(string: "https://api.groq.com/openai/v1/audio/transcriptions") else {
+        guard let apiURL = URL(string: "https://api.groq.com/openai/v1/audio/transcriptions")
+        else {
             completion(.failure(APIError.invalidURL))
+            return
+        }
+
+        // Read audio file with error handling
+        let audioData: Data
+        do {
+            audioData = try Data(contentsOf: fileURL)
+        } catch {
+            completion(.failure(APIError.fileReadFailed(error.localizedDescription)))
+            return
+        }
+
+        if audioData.count > maxFileSize {
+            let sizeMB = audioData.count / (1024 * 1024)
+            completion(.failure(APIError.fileTooLarge(sizeMB)))
             return
         }
 
         var request = URLRequest(url: apiURL)
         request.httpMethod = "POST"
         request.setValue("Bearer \(config.apiKey)", forHTTPHeaderField: "Authorization")
-        // Generous timeout: 60s should handle even long recordings
         request.timeoutInterval = 60
 
         let boundary = "Boundary-\(UUID().uuidString)"
@@ -23,12 +41,9 @@ enum GroqAPI {
             forHTTPHeaderField: "Content-Type"
         )
 
-        // Detect content type from extension
         let ext = fileURL.pathExtension.lowercased()
         let mimeType = ext == "flac" ? "audio/flac" : "audio/wav"
-        let fileName = "audio.\(ext)"
 
-        // Build multipart body
         var body = Data()
 
         func field(_ name: String, _ value: String) {
@@ -37,26 +52,19 @@ enum GroqAPI {
             body.append("\(value)\r\n")
         }
 
-        // Use turbo model for max speed; specify language for faster processing
         field("model", config.model)
         field("language", config.language)
-        // "text" format = fastest response (no JSON overhead)
         field("response_format", "text")
 
-        // Attach audio file
         body.append("--\(boundary)\r\n")
         body.append(
-            "Content-Disposition: form-data; name=\"file\"; filename=\"\(fileName)\"\r\n")
+            "Content-Disposition: form-data; name=\"file\"; filename=\"audio.\(ext)\"\r\n")
         body.append("Content-Type: \(mimeType)\r\n\r\n")
-        if let audioData = try? Data(contentsOf: fileURL) {
-            body.append(audioData)
-        }
+        body.append(audioData)
         body.append("\r\n--\(boundary)--\r\n")
 
         request.httpBody = body
 
-        // Use a dedicated ephemeral session for zero caching overhead
-        let session = URLSession(configuration: .ephemeral)
         session.dataTask(with: request) { data, response, error in
             if let error = error {
                 completion(.failure(error))
@@ -74,7 +82,6 @@ enum GroqAPI {
                 return
             }
 
-            // response_format=text returns plain text (no JSON wrapping)
             if let text = String(data: data, encoding: .utf8)?
                 .trimmingCharacters(in: .whitespacesAndNewlines), !text.isEmpty
             {
@@ -88,6 +95,8 @@ enum GroqAPI {
     enum APIError: LocalizedError {
         case invalidURL
         case noResponse
+        case fileReadFailed(String)
+        case fileTooLarge(Int)
         case httpError(Int, String)
         case emptyTranscription
 
@@ -95,6 +104,8 @@ enum GroqAPI {
             switch self {
             case .invalidURL: return "Invalid API URL"
             case .noResponse: return "No response from server"
+            case .fileReadFailed(let reason): return "Can't read audio: \(reason)"
+            case .fileTooLarge(let mb): return "Recording too large (\(mb)MB, max 25MB)"
             case .httpError(let code, let msg): return "HTTP \(code): \(msg)"
             case .emptyTranscription: return "Empty transcription"
             }
@@ -102,7 +113,6 @@ enum GroqAPI {
     }
 }
 
-// Convenience for building multipart data
 extension Data {
     mutating func append(_ string: String) {
         if let data = string.data(using: .utf8) {
