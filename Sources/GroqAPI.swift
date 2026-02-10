@@ -90,8 +90,16 @@ enum GroqAPI {
         completion: @escaping (Result<String, TranscriptionError>) -> Void
     ) {
         let s = attempt == 1 ? session : URLSession(configuration: .ephemeral)
+        #if DEBUG
+        let sendTime = CFAbsoluteTimeGetCurrent()
+        #endif
 
         s.dataTask(with: request) { data, response, error in
+            #if DEBUG
+            let elapsed = CFAbsoluteTimeGetCurrent() - sendTime
+            let bodyKB = request.httpBody.map { $0.count / 1024 } ?? 0
+            NSLog("GroqDictate: transcription attempt %d — %dKB — %.2fs", attempt, bodyKB, elapsed)
+            #endif
             if attempt > 1 { s.invalidateAndCancel() }
 
             if let error = error {

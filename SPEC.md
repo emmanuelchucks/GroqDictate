@@ -93,8 +93,6 @@ When the user presses Right ⌘ a second time (during recording):
 3. The audio file is prepared for upload (see [Audio](#9-audio) for format details).
 4. The file is uploaded to the Groq API for transcription.
 
-If transcription takes more than **5 seconds** (normal is 0.5–3s), the label updates to **"⟳ Taking longer than usual…"** so the user knows the app hasn't frozen.
-
 ### Transcription Success
 
 1. The panel dismisses.
@@ -124,16 +122,16 @@ A pre-warm `HEAD` request is sent at launch to establish the TCP+TLS connection,
 
 ### Error Messages and Actions
 
-| Condition | Left Label | Right Label | Right ⌘ Action |
-|-----------|-----------|-------------|----------------|
-| Rate limited (429) | ⚠ Rate limited — wait Xs | ⌘ retry · esc to dismiss | Retry transcription |
-| Server error (500/502/503) | ⚠ Groq unavailable | ⌘ retry · esc to dismiss | Retry transcription |
-| Network timeout | ⚠ Timed out | ⌘ retry · esc to dismiss | Retry transcription |
-| Empty transcription | ⚠ No speech detected | ⌘ retry · esc to dismiss | Retry transcription |
-| File too large (413) | ⚠ Recording too large | ⌘ new · esc to dismiss | Start new recording |
-| Invalid API key (401) | ⚠ Invalid API key | ⌘ settings · esc to dismiss | Open Settings |
-| Mic access denied | ⚠ Mic access denied | ⌘ settings · esc to dismiss | Open System Settings > Microphone |
-| Other errors | ⚠ (first 50 chars) | esc to dismiss | — |
+| Condition | Top (message) | Bottom Left (action) | Bottom Right | Right ⌘ Action |
+|-----------|--------------|---------------------|--------------|----------------|
+| Rate limited (429) | ⚠ Rate limited, wait Xs | ⌘ retry | esc to dismiss | Retry transcription |
+| Server error (500/502/503) | ⚠ Groq unavailable | ⌘ retry | esc to dismiss | Retry transcription |
+| Network timeout | ⚠ Timed out | ⌘ retry | esc to dismiss | Retry transcription |
+| Empty transcription | ⚠ No speech detected | ⌘ retry | esc to dismiss | Retry transcription |
+| File too large (413) | ⚠ Recording too large | ⌘ new | esc to dismiss | Start new recording |
+| Invalid API key (401) | ⚠ Invalid API key | ⌘ settings | esc to dismiss | Open Settings |
+| Mic access denied | ⚠ Mic access denied | ⌘ settings | esc to dismiss | Open System Settings > Microphone |
+| Other errors | ⚠ (first 50 chars) | | esc to dismiss | — |
 
 For 429 responses, the `retry-after` header from Groq tells us exactly how long to wait. The message includes the wait time.
 
@@ -206,17 +204,19 @@ The panel is created once at launch with `defer: false` (pre-created in the wind
 
 ### Visual Layout
 
-Status on the left, actions on the right.
+The panel has two zones. The top zone (most of the panel height) shows the main visual content. The bottom zone is a single row split between a label on the left and an action hint on the right. Esc is always bottom-right.
 
-| State | Left | Right |
-|-------|------|-------|
-| Recording | ● Recording | esc to cancel |
-| Transcribing | ⟳ Transcribing… | esc to cancel |
-| Transcribing (slow) | ⟳ Taking longer than usual… | esc to cancel |
-| Error (retryable) | ⚠ [error message] | ⌘ retry · esc to dismiss |
-| Error (too large) | ⚠ Recording too large | ⌘ new · esc to dismiss |
-| Error (bad key) | ⚠ Invalid API key | ⌘ settings · esc to dismiss |
-| Mic denied | ⚠ Mic access denied | ⌘ settings · esc to dismiss |
+| State | Top (visual) | Bottom Left | Bottom Right |
+|-------|-------------|-------------|--------------|
+| Recording | Waveform bars | ● Recording | esc to cancel |
+| Transcribing | Shimmer bars | ⟳ Transcribing… | esc to cancel |
+| Error (retryable) | ⚠ [error message] | ⌘ retry | esc to dismiss |
+| Error (too large) | ⚠ Recording too large | ⌘ new | esc to dismiss |
+| Error (bad key) | ⚠ Invalid API key | ⌘ settings | esc to dismiss |
+| Mic denied | ⚠ Mic access denied | ⌘ settings | esc to dismiss |
+| Error (other) | ⚠ [error message] | | esc to dismiss |
+
+The error message is displayed in the top zone where it has full width. This prevents long messages from clashing with action hints.
 
 ---
 

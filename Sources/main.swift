@@ -32,7 +32,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     private var setupWindow: SetupWindow?
     private var rightCommandDown = false
     private var targetApp: NSRunningApplication?
-    private var slowTimer: DispatchWorkItem?
+
     private var accessibilityObserver: NSObjectProtocol?
     private var permissionAnchor: NSWindow?
     private var lastAudioFileURL: URL?
@@ -340,7 +340,6 @@ class AppDelegate: NSObject, NSApplicationDelegate {
 
         state = .processing
         panel.waveformView.setProcessing()
-        startSlowTimer()
 
         recorder.stop { [weak self] fileURL in
             guard let self, case .processing = state else { return }
@@ -353,7 +352,6 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         GroqAPI.transcribe(fileURL: fileURL, config: config) { [weak self] result in
             DispatchQueue.main.async {
                 guard let self, case .processing = self.state else { return }
-                self.cancelSlowTimer()
 
                 switch result {
                 case .success(let text):
@@ -379,12 +377,10 @@ class AppDelegate: NSObject, NSApplicationDelegate {
 
         state = .processing
         panel.waveformView.setProcessing()
-        startSlowTimer()
         transcribe(fileURL: url, config: config)
     }
 
     private func cancel() {
-        cancelSlowTimer()
         if case .recording = state { recorder.stop { _ in } }
         recorder.cleanup()
         lastAudioFileURL = nil
@@ -394,7 +390,6 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     private func dismissError() {
-        cancelSlowTimer()
         recorder.cleanup()
         lastAudioFileURL = nil
         state = .idle
@@ -469,21 +464,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         up?.post(tap: .cgAnnotatedSessionEventTap)
     }
 
-    /// Shows "Taking longer than usual…" after 5 seconds of processing.
-    private func startSlowTimer() {
-        cancelSlowTimer()
-        let work = DispatchWorkItem { [weak self] in
-            guard let self, case .processing = state else { return }
-            panel.waveformView.setSlowTranscription()
-        }
-        slowTimer = work
-        DispatchQueue.main.asyncAfter(deadline: .now() + 5, execute: work)
-    }
 
-    private func cancelSlowTimer() {
-        slowTimer?.cancel()
-        slowTimer = nil
-    }
 }
 
 // MARK: - Launch

@@ -59,7 +59,6 @@ class WaveformView: NSView {
     private var animTimer: Timer?
     private var processingProgress: CGFloat = 0
     private var processingForward = true
-    private var slowTranscription = false
     private weak var levelSource: AudioRecorder?
 
     override init(frame: NSRect) {
@@ -82,20 +81,13 @@ class WaveformView: NSView {
 
     func setProcessing() {
         displayState = .processing
-        slowTranscription = false
         processingProgress = 0
         processingForward = true
         startAnimating()
     }
 
-    func setSlowTranscription() {
-        slowTranscription = true
-        needsDisplay = true
-    }
-
     func setIdle() {
         displayState = .idle
-        slowTranscription = false
         stopAnimating()
         barHeights = Array(repeating: 0, count: barCount)
         needsDisplay = true
@@ -165,18 +157,18 @@ class WaveformView: NSView {
             drawLabel("● Recording", color: .systemRed, at: NSPoint(x: 16, y: y))
             drawHint("esc to cancel", in: b, y: y)
         case .processing:
-            let text = slowTranscription ? "⟳ Taking longer than usual…" : "⟳ Transcribing…"
+            let text = "⟳ Transcribing…"
             drawLabel(text, color: .systemOrange, at: NSPoint(x: 16, y: y))
             drawHint("esc to cancel", in: b, y: y)
-        case .error(let msg, let action):
-            drawLabel("⚠ \(msg)", color: .systemRed, at: NSPoint(x: 16, y: y))
-            let hint: String = switch action {
-            case .retry:        "⌘ retry · esc to dismiss"
-            case .newRecording: "⌘ new · esc to dismiss"
-            case .settings:     "⌘ settings · esc to dismiss"
-            case .dismissOnly:  "esc to dismiss"
+        case .error(_, let action):
+            let actionLabel: String? = switch action {
+            case .retry:        "⌘ retry"
+            case .newRecording: "⌘ new"
+            case .settings:     "⌘ settings"
+            case .dismissOnly:  nil
             }
-            drawHint(hint, in: b, y: y)
+            if let actionLabel { drawLabel(actionLabel, color: .secondaryLabelColor, at: NSPoint(x: 16, y: y)) }
+            drawHint("esc to dismiss", in: b, y: y)
         }
     }
 
@@ -244,9 +236,9 @@ class WaveformView: NSView {
 
     private func drawErrorText(_ message: String, in r: NSRect, ctx: CGContext) {
         let attrs: [NSAttributedString.Key: Any] = [
-            .font: NSFont.systemFont(ofSize: 12, weight: .medium),
-            .foregroundColor: NSColor.systemRed.withAlphaComponent(0.9)]
-        let str = NSAttributedString(string: message, attributes: attrs)
+            .font: NSFont.systemFont(ofSize: 13, weight: .medium),
+            .foregroundColor: NSColor.systemOrange]
+        let str = NSAttributedString(string: "⚠ \(message)", attributes: attrs)
         let size = str.size()
         str.draw(at: NSPoint(x: r.midX - size.width / 2, y: r.midY - size.height / 2))
     }
