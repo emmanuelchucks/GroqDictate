@@ -1,222 +1,276 @@
-import Accelerate
-import AVFoundation
-import Cocoa
+import AudioToolbox
 import CoreAudio
+import Foundation
 
 struct AudioDevice {
     let uid: String
     let name: String
+    let deviceID: AudioDeviceID
 }
 
+/// Records microphone audio to a 16kHz 16-bit mono WAV file using AudioQueue.
+///
+/// We use AudioQueue instead of AVAudioEngine because AVAudioEngine has a per-process
+/// format cache bug: on first mic access after permission grant, macOS reconfigures the
+/// audio hardware. AVAudioEngine caches the tap format before the reconfig, then fails
+/// with -10868 (format mismatch) on every subsequent start attempt — even with a fresh
+/// instance. AudioQueue handles this internally with its own retry mechanism.
 class AudioRecorder {
     var inputGain: Float = 5.0
-
-    private var audioEngine = AVAudioEngine()
-    private var audioFile: AVAudioFile?
-    private let wavURL = FileManager.default.temporaryDirectory.appendingPathComponent(
-        "groqdictate.wav")
-    private let flacURL = FileManager.default.temporaryDirectory.appendingPathComponent(
-        "groqdictate.flac")
-
-    /// Current audio level (written on audio thread, read on main for waveform display)
+    var selectedDeviceUID: String?
     var currentLevel: Float = 0
+    private(set) var isRecording = false
 
-    // Serial queue for file writes (keeps I/O off the real-time audio thread)
-    private let writeQueue = DispatchQueue(label: "com.groqdictate.audiowrite")
+    private var audioQueue: AudioQueueRef?
+    private var buffers: [AudioQueueBufferRef] = []
+    private var fileHandle: FileHandle?
+    private var bytesWritten: UInt32 = 0
 
-    // Only compress to FLAC if WAV exceeds this size.
-    // Groq docs: "For lower latency, convert your files to wav format"
-    private static let flacThresholdBytes = 10 * 1024 * 1024  // 10MB ≈ 5 min
+    private let wavURL = FileManager.default.temporaryDirectory
+        .appendingPathComponent("groqdictate.wav")
+    private let flacURL = FileManager.default.temporaryDirectory
+        .appendingPathComponent("groqdictate.flac")
 
-    // MARK: - Device Enumeration
+    // Recordings over 10MB (~5 min) get compressed to FLAC before upload.
+    // Under that, WAV is faster (no compression overhead, Groq prefers WAV).
+    private static let flacThreshold = 10 * 1024 * 1024
 
-    static func availableInputDevices() -> [AudioDevice] {
-        var address = AudioObjectPropertyAddress(
-            mSelector: kAudioHardwarePropertyDevices,
-            mScope: kAudioObjectPropertyScopeGlobal,
-            mElement: kAudioObjectPropertyElementMain
-        )
-
-        var dataSize: UInt32 = 0
-        AudioObjectGetPropertyDataSize(
-            AudioObjectID(kAudioObjectSystemObject), &address, 0, nil, &dataSize)
-        let count = Int(dataSize) / MemoryLayout<AudioDeviceID>.size
-        var devices = [AudioDeviceID](repeating: 0, count: count)
-        AudioObjectGetPropertyData(
-            AudioObjectID(kAudioObjectSystemObject), &address, 0, nil, &dataSize, &devices)
-
-        var result: [AudioDevice] = []
-        for device in devices {
-            var inputChannels = AudioObjectPropertyAddress(
-                mSelector: kAudioDevicePropertyStreamConfiguration,
-                mScope: kAudioDevicePropertyScopeInput,
-                mElement: kAudioObjectPropertyElementMain
-            )
-            var chanSize: UInt32 = 0
-            guard
-                AudioObjectGetPropertyDataSize(device, &inputChannels, 0, nil, &chanSize) == noErr,
-                chanSize > 0
-            else { continue }
-
-            let bufferListPtr = UnsafeMutableRawPointer.allocate(
-                byteCount: Int(chanSize),
-                alignment: MemoryLayout<AudioBufferList>.alignment
-            )
-            defer { bufferListPtr.deallocate() }
-
-            guard
-                AudioObjectGetPropertyData(
-                    device, &inputChannels, 0, nil, &chanSize, bufferListPtr) == noErr
-            else { continue }
-
-            let ablPointer = UnsafeMutableAudioBufferListPointer(
-                bufferListPtr.assumingMemoryBound(to: AudioBufferList.self))
-            let totalChannels = ablPointer.reduce(0) { $0 + Int($1.mNumberChannels) }
-            guard totalChannels > 0 else { continue }
-
-            var nameAddress = AudioObjectPropertyAddress(
-                mSelector: kAudioDevicePropertyDeviceNameCFString,
-                mScope: kAudioObjectPropertyScopeGlobal,
-                mElement: kAudioObjectPropertyElementMain
-            )
-            var cfName: CFString = "" as CFString
-            var nameSize = UInt32(MemoryLayout<CFString>.size)
-            AudioObjectGetPropertyData(device, &nameAddress, 0, nil, &nameSize, &cfName)
-
-            var uidAddress = AudioObjectPropertyAddress(
-                mSelector: kAudioDevicePropertyDeviceUID,
-                mScope: kAudioObjectPropertyScopeGlobal,
-                mElement: kAudioObjectPropertyElementMain
-            )
-            var cfUID: CFString = "" as CFString
-            var uidSize = UInt32(MemoryLayout<CFString>.size)
-            AudioObjectGetPropertyData(device, &uidAddress, 0, nil, &uidSize, &cfUID)
-
-            result.append(AudioDevice(uid: cfUID as String, name: cfName as String))
-        }
-        return result
-    }
+    private static let sampleRate: Float64 = 16000
+    private static let bufferSize: UInt32 = 4096  // ~128ms per buffer at 16kHz
+    private static let bufferCount = 3
 
     // MARK: - Recording
 
     func start() throws {
-        let inputNode = audioEngine.inputNode
-        let hwFormat = inputNode.inputFormat(forBus: 0)
-
-        // Record as float32 at 16kHz mono (stable for AVAudioFile writes)
-        let recordFormat = AVAudioFormat(
-            commonFormat: .pcmFormatFloat32, sampleRate: 16000, channels: 1, interleaved: false)!
-
         try? FileManager.default.removeItem(at: wavURL)
-        audioFile = try AVAudioFile(forWriting: wavURL, settings: [
-            AVFormatIDKey: kAudioFormatLinearPCM,
-            AVSampleRateKey: 16000,
-            AVNumberOfChannelsKey: 1,
-            AVLinearPCMBitDepthKey: 16,
-            AVLinearPCMIsFloatKey: false,
-            AVLinearPCMIsBigEndianKey: false,
-        ])
+        FileManager.default.createFile(atPath: wavURL.path, contents: nil)
+        fileHandle = try FileHandle(forWritingTo: wavURL)
+        bytesWritten = 0
+        writeWAVHeader(dataSize: 0)
 
-        let converter = AVAudioConverter(from: hwFormat, to: recordFormat)!
-        converter.sampleRateConverterQuality = .min  // speech doesn't need audiophile resampling
-        let gain = inputGain
+        var format = Self.monoInt16Format()
+        let selfPtr = UnsafeMutableRawPointer(Unmanaged.passUnretained(self).toOpaque())
 
-        inputNode.installTap(onBus: 0, bufferSize: 4096, format: hwFormat) {
-            [weak self] buffer, _ in
-            guard let self = self else { return }
+        var queue: AudioQueueRef?
+        try osCheck(AudioQueueNewInput(&format, Self.inputCallback, selfPtr, nil, nil, 0, &queue))
+        audioQueue = queue!
 
-            let frameCount = AVAudioFrameCount(
-                Double(buffer.frameLength) * 16000.0 / hwFormat.sampleRate)
-            guard frameCount > 0 else { return }
-
-            guard
-                let convertedBuffer = AVAudioPCMBuffer(
-                    pcmFormat: recordFormat, frameCapacity: frameCount)
-            else { return }
-
-            var error: NSError?
-            var consumed = false
-            converter.convert(to: convertedBuffer, error: &error) { _, outStatus in
-                guard !consumed else {
-                    outStatus.pointee = .noDataNow
-                    return nil
-                }
-                consumed = true
-                outStatus.pointee = .haveData
-                return buffer
-            }
-
-            // Apply gain and compute RMS via Accelerate (NEON SIMD on ARM64)
-            if let channelData = convertedBuffer.floatChannelData {
-                let ptr = channelData[0]
-                let len = vDSP_Length(convertedBuffer.frameLength)
-                if gain > 1.0 {
-                    var g = gain
-                    vDSP_vsmul(ptr, 1, &g, ptr, 1, len)
-                }
-                var rms: Float = 0
-                vDSP_rmsqv(ptr, 1, &rms, len)
-                self.currentLevel = min(rms * 3.0, 1.0)
-            }
-
-            // AVAudioFile handles float32→int16 conversion on write (via processingFormat→fileFormat)
-            self.writeQueue.async { [weak self] in
-                autoreleasepool {
-                    try? self?.audioFile?.write(from: convertedBuffer)
-                }
-            }
-        }
-
-        audioEngine.prepare()
-        try audioEngine.start()
+        setInputDevice(on: queue!)
+        try allocateAndEnqueueBuffers(on: queue!)
+        try osCheck(AudioQueueStart(queue!, nil))
+        isRecording = true
     }
 
-    /// Stop recording. Short recordings sent as WAV; long ones compressed via macOS-native afconvert.
     func stop(completion: @escaping (URL) -> Void) {
-        audioEngine.inputNode.removeTap(onBus: 0)
-        audioEngine.stop()
+        isRecording = false
 
-        // Ensure pending writes complete before reading the file
-        writeQueue.sync {
-            self.audioFile = nil
+        if let queue = audioQueue {
+            AudioQueueStop(queue, true)
+            AudioQueueDispose(queue, true)
+            audioQueue = nil
+            buffers.removeAll()
         }
 
-        let fileSize =
-            (try? FileManager.default.attributesOfItem(atPath: wavURL.path)[.size] as? Int) ?? 0
+        finalizeWAVHeader()
+        try? fileHandle?.close()
+        fileHandle = nil
 
-        if fileSize < Self.flacThresholdBytes {
+        let fileSize = (try? FileManager.default.attributesOfItem(atPath: wavURL.path)[.size] as? Int) ?? 0
+
+        guard fileSize >= Self.flacThreshold else {
             DispatchQueue.main.async { completion(self.wavURL) }
             return
         }
 
-        // Compress with macOS-native afconvert (ships with every Mac, zero dependencies)
-        DispatchQueue.global(qos: .userInitiated).async { [wavURL, flacURL] in
-            try? FileManager.default.removeItem(at: flacURL)
-
-            let process = Process()
-            process.executableURL = URL(fileURLWithPath: "/usr/bin/afconvert")
-            process.arguments = ["-f", "flac", "-d", "flac", "-c", "1", wavURL.path, flacURL.path]
-            process.standardOutput = FileHandle.nullDevice
-            process.standardError = FileHandle.nullDevice
-
-            do {
-                try process.run()
-                process.waitUntilExit()
-                if process.terminationStatus == 0
-                    && FileManager.default.fileExists(atPath: flacURL.path)
-                {
-                    try? FileManager.default.removeItem(at: wavURL)
-                    DispatchQueue.main.async { completion(flacURL) }
-                    return
-                }
-            } catch {}
-
-            DispatchQueue.main.async { completion(wavURL) }
-        }
+        compressToFLAC(completion: completion)
     }
 
     func cleanup() {
         try? FileManager.default.removeItem(at: wavURL)
         try? FileManager.default.removeItem(at: flacURL)
     }
+
+    // MARK: - AudioQueue Callback
+
+    /// Called on AudioQueue's internal thread for each filled buffer.
+    fileprivate func processBuffer(_ buffer: AudioQueueBufferRef) {
+        let byteCount = Int(buffer.pointee.mAudioDataByteSize)
+        guard byteCount > 0 else { return }
+
+        let sampleCount = byteCount / 2
+        let samples = buffer.pointee.mAudioData.bindMemory(to: Int16.self, capacity: sampleCount)
+        let gain = inputGain
+
+        // Apply gain in-place and compute RMS for waveform display
+        var sumSquares: Float = 0
+        for i in 0..<sampleCount {
+            var s = Float(samples[i]) / 32768.0
+            if gain > 1.0 { s *= gain }
+            sumSquares += s * s
+            samples[i] = Int16(clamping: Int(max(-1, min(1, s)) * 32767))
+        }
+        currentLevel = min(sqrt(sumSquares / Float(max(sampleCount, 1))) * 3, 1)
+
+        fileHandle?.write(Data(bytes: buffer.pointee.mAudioData, count: byteCount))
+        bytesWritten += UInt32(byteCount)
+
+        if let queue = audioQueue {
+            AudioQueueEnqueueBuffer(queue, buffer, 0, nil)
+        }
+    }
+
+    private static let inputCallback: AudioQueueInputCallback = { userData, queue, buffer, _, _, _ in
+        guard let userData else { return }
+        Unmanaged<AudioRecorder>.fromOpaque(userData).takeUnretainedValue().processBuffer(buffer)
+    }
+
+    // MARK: - Device Selection
+
+    /// Sets the input device on the queue. Uses CFString UID, not AudioDeviceID —
+    /// kAudioQueueProperty_CurrentDevice takes a CFStringRef per AudioQueue.h.
+    private func setInputDevice(on queue: AudioQueueRef) {
+        guard let uid = selectedDeviceUID, !uid.isEmpty else { return }
+        var cfUID: CFString = uid as CFString
+        let status = AudioQueueSetProperty(
+            queue, kAudioQueueProperty_CurrentDevice,
+            &cfUID, UInt32(MemoryLayout<CFString>.size))
+        if status != noErr {
+            NSLog("GroqDictate: failed to set input device '\(uid)' (status \(status))")
+        }
+    }
+
+    // MARK: - WAV File
+
+    private func writeWAVHeader(dataSize: UInt32) {
+        fileHandle?.write(Self.wavHeader(dataSize: dataSize))
+    }
+
+    private func finalizeWAVHeader() {
+        guard let fh = fileHandle else { return }
+        fh.seek(toFileOffset: 0)
+        fh.write(Self.wavHeader(dataSize: bytesWritten))
+    }
+
+    private static func wavHeader(dataSize: UInt32) -> Data {
+        var d = Data(capacity: 44)
+        d.append(ascii: "RIFF")
+        d.append(uint32: 36 + dataSize)
+        d.append(ascii: "WAVE")
+        d.append(ascii: "fmt ")
+        d.append(uint32: 16)               // PCM subchunk size
+        d.append(uint16: 1)                 // PCM format
+        d.append(uint16: 1)                 // mono
+        d.append(uint32: 16000)             // sample rate
+        d.append(uint32: 32000)             // byte rate (16000 * 1 * 2)
+        d.append(uint16: 2)                 // block align (channels * bytes per sample)
+        d.append(uint16: 16)                // bits per sample
+        d.append(ascii: "data")
+        d.append(uint32: dataSize)
+        return d
+    }
+
+    // MARK: - FLAC Compression
+
+    private func compressToFLAC(completion: @escaping (URL) -> Void) {
+        DispatchQueue.global(qos: .userInitiated).async { [wavURL, flacURL] in
+            try? FileManager.default.removeItem(at: flacURL)
+
+            let proc = Process()
+            proc.executableURL = URL(fileURLWithPath: "/usr/bin/afconvert")
+            proc.arguments = ["-f", "flac", "-d", "flac", "-c", "1", wavURL.path, flacURL.path]
+            proc.standardOutput = FileHandle.nullDevice
+            proc.standardError = FileHandle.nullDevice
+
+            let ok = (try? proc.run()).map { proc.waitUntilExit(); return proc.terminationStatus == 0 } ?? false
+            let url = ok && FileManager.default.fileExists(atPath: flacURL.path) ? flacURL : wavURL
+            if url == flacURL { try? FileManager.default.removeItem(at: wavURL) }
+
+            DispatchQueue.main.async { completion(url) }
+        }
+    }
+
+    // MARK: - Helpers
+
+    private static func monoInt16Format() -> AudioStreamBasicDescription {
+        AudioStreamBasicDescription(
+            mSampleRate: sampleRate,
+            mFormatID: kAudioFormatLinearPCM,
+            mFormatFlags: kLinearPCMFormatFlagIsSignedInteger | kLinearPCMFormatFlagIsPacked,
+            mBytesPerPacket: 2, mFramesPerPacket: 1, mBytesPerFrame: 2,
+            mChannelsPerFrame: 1, mBitsPerChannel: 16, mReserved: 0)
+    }
+
+    private func allocateAndEnqueueBuffers(on queue: AudioQueueRef) throws {
+        buffers.removeAll()
+        for _ in 0..<Self.bufferCount {
+            var buf: AudioQueueBufferRef?
+            try osCheck(AudioQueueAllocateBuffer(queue, Self.bufferSize, &buf))
+            buffers.append(buf!)
+            AudioQueueEnqueueBuffer(queue, buf!, 0, nil)
+        }
+    }
+
+    private func osCheck(_ status: OSStatus) throws {
+        guard status != noErr else { return }
+        throw NSError(domain: NSOSStatusErrorDomain, code: Int(status))
+    }
+
+    // MARK: - Device Enumeration
+
+    static func availableInputDevices() -> [AudioDevice] {
+        let systemObject = AudioObjectID(kAudioObjectSystemObject)
+        var address = AudioObjectPropertyAddress(
+            mSelector: kAudioHardwarePropertyDevices,
+            mScope: kAudioObjectPropertyScopeGlobal,
+            mElement: kAudioObjectPropertyElementMain)
+
+        var size: UInt32 = 0
+        AudioObjectGetPropertyDataSize(systemObject, &address, 0, nil, &size)
+        let count = Int(size) / MemoryLayout<AudioDeviceID>.size
+        var ids = [AudioDeviceID](repeating: 0, count: count)
+        AudioObjectGetPropertyData(systemObject, &address, 0, nil, &size, &ids)
+
+        return ids.compactMap { id in
+            guard inputChannelCount(for: id) > 0 else { return nil }
+            let name = stringProperty(kAudioDevicePropertyDeviceNameCFString, of: id)
+            let uid = stringProperty(kAudioDevicePropertyDeviceUID, of: id)
+            return AudioDevice(uid: uid, name: name, deviceID: id)
+        }
+    }
+
+    private static func inputChannelCount(for deviceID: AudioDeviceID) -> Int {
+        var address = AudioObjectPropertyAddress(
+            mSelector: kAudioDevicePropertyStreamConfiguration,
+            mScope: kAudioDevicePropertyScopeInput,
+            mElement: kAudioObjectPropertyElementMain)
+        var size: UInt32 = 0
+        guard AudioObjectGetPropertyDataSize(deviceID, &address, 0, nil, &size) == noErr,
+              size > 0 else { return 0 }
+
+        let buf = UnsafeMutableRawPointer.allocate(byteCount: Int(size), alignment: MemoryLayout<AudioBufferList>.alignment)
+        defer { buf.deallocate() }
+        guard AudioObjectGetPropertyData(deviceID, &address, 0, nil, &size, buf) == noErr else { return 0 }
+
+        return UnsafeMutableAudioBufferListPointer(buf.assumingMemoryBound(to: AudioBufferList.self))
+            .reduce(0) { $0 + Int($1.mNumberChannels) }
+    }
+
+    private static func stringProperty(_ selector: AudioObjectPropertySelector, of id: AudioDeviceID) -> String {
+        var address = AudioObjectPropertyAddress(
+            mSelector: selector,
+            mScope: kAudioObjectPropertyScopeGlobal,
+            mElement: kAudioObjectPropertyElementMain)
+        var value: CFString = "" as CFString
+        var size = UInt32(MemoryLayout<CFString>.size)
+        AudioObjectGetPropertyData(id, &address, 0, nil, &size, &value)
+        return value as String
+    }
+}
+
+// MARK: - Data Helpers for WAV Header
+
+private extension Data {
+    mutating func append(ascii: String) { append(contentsOf: ascii.utf8) }
+    mutating func append(uint16: UInt16) { var v = uint16.littleEndian; append(Data(bytes: &v, count: 2)) }
+    mutating func append(uint32: UInt32) { var v = uint32.littleEndian; append(Data(bytes: &v, count: 4)) }
 }

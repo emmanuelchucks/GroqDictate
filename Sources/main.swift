@@ -6,10 +6,19 @@ import CoreAudio
 // MARK: - App Delegate
 
 class AppDelegate: NSObject, NSApplicationDelegate {
+
+    // MARK: - State
+
+    enum ErrorKind {
+        case retryable(String)
+        case tooLarge
+        case invalidKey
+        case micDenied
+        case other(String)
+    }
+
     enum DictationState {
-        case idle
-        case recording
-        case processing
+        case idle, recording, processing, error(ErrorKind)
     }
 
     private var state: DictationState = .idle
@@ -23,11 +32,20 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     private var setupWindow: SetupWindow?
     private var rightCommandDown = false
     private var targetApp: NSRunningApplication?
-    private var dismissWorkItem: DispatchWorkItem?
+    private var slowTimer: DispatchWorkItem?
     private var accessibilityObserver: NSObjectProtocol?
+    private var permissionAnchor: NSWindow?
+    private var lastAudioFileURL: URL?
 
-    /// Prevent ghost window when relaunched from Raycast/Spotlight
+    // MARK: - Lifecycle
+
     func applicationShouldHandleReopen(_ sender: NSApplication, hasVisibleWindows flag: Bool) -> Bool {
+        switch state {
+        case .idle:
+            showSetup(previousApp: targetApp ?? NSWorkspace.shared.menuBarOwningApplication)
+        case .recording, .processing, .error:
+            panel.orderFront(nil)
+        }
         return false
     }
 
@@ -45,60 +63,75 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     private func applyConfig() {
-        if let config = Config.load() {
-            recorder.inputGain = config.inputGain
-            if let micUID = config.micUID {
-                AudioDeviceHelper.setPreferredInput(uid: micUID)
-            }
-        }
+        guard let config = Config.load() else { return }
+        recorder.inputGain = config.inputGain
+        recorder.selectedDeviceUID = config.micUID
     }
 
-    // MARK: - Permissions (mic first → accessibility second, one at a time)
+    // MARK: - Permissions
 
     private func requestPermissionsIfNeeded() {
         switch AVCaptureDevice.authorizationStatus(for: .audio) {
         case .authorized:
             requestAccessibilityThenStart()
+            endPermissionFlow()
         case .notDetermined:
             AVCaptureDevice.requestAccess(for: .audio) { [weak self] _ in
                 DispatchQueue.main.asyncAfter(deadline: .now() + 0.6) {
                     self?.requestAccessibilityThenStart()
+                    self?.endPermissionFlow()
                 }
             }
         case .denied, .restricted:
             requestAccessibilityThenStart()
+            endPermissionFlow()
         @unknown default:
             requestAccessibilityThenStart()
+            endPermissionFlow()
         }
+    }
+
+    /// Offscreen anchor window keeps the .accessory app active for system permission dialogs.
+    private func startPermissionFlow() {
+        let anchor = NSWindow(
+            contentRect: NSRect(x: -10_000, y: -10_000, width: 1, height: 1),
+            styleMask: [.borderless], backing: .buffered, defer: false)
+        anchor.isReleasedWhenClosed = false
+        anchor.isOpaque = false
+        anchor.backgroundColor = .clear
+        anchor.hasShadow = false
+        anchor.ignoresMouseEvents = true
+        anchor.collectionBehavior = [.canJoinAllSpaces, .ignoresCycle]
+        anchor.isExcludedFromWindowsMenu = true
+        anchor.orderFront(nil)
+        permissionAnchor = anchor
+        NSApp.activate(ignoringOtherApps: true)
+        requestPermissionsIfNeeded()
+    }
+
+    private func endPermissionFlow() {
+        permissionAnchor?.close()
+        permissionAnchor = nil
     }
 
     private func requestAccessibilityThenStart() {
         installEventTap()
+        guard !AXIsProcessTrusted() else { return }
 
-        if AXIsProcessTrusted() { return }  // already granted
+        let opts = [kAXTrustedCheckOptionPrompt.takeUnretainedValue(): true] as CFDictionary
+        _ = AXIsProcessTrustedWithOptions(opts)
 
-        // Show the system prompt
-        let options = [kAXTrustedCheckOptionPrompt.takeUnretainedValue(): true] as CFDictionary
-        _ = AXIsProcessTrustedWithOptions(options)
-
-        // Listen for accessibility permission changes via DistributedNotification
-        // macOS posts "com.apple.accessibility.api" when the user toggles Accessibility
         accessibilityObserver = DistributedNotificationCenter.default().addObserver(
             forName: NSNotification.Name("com.apple.accessibility.api"),
-            object: nil,
-            queue: .main
+            object: nil, queue: .main
         ) { [weak self] _ in
-            // Small delay — the notification fires before TCC db is fully updated
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
-                guard let self = self else { return }
-                if AXIsProcessTrusted() {
-                    // Remove observer — no longer needed
-                    if let obs = self.accessibilityObserver {
-                        DistributedNotificationCenter.default().removeObserver(obs)
-                        self.accessibilityObserver = nil
-                    }
-                    self.installEventTap()
+                guard let self, AXIsProcessTrusted() else { return }
+                if let obs = self.accessibilityObserver {
+                    DistributedNotificationCenter.default().removeObserver(obs)
+                    self.accessibilityObserver = nil
                 }
+                self.installEventTap()
             }
         }
     }
@@ -108,120 +141,78 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     private func buildAppMenu() {
         let mainMenu = NSMenu()
 
-        let appMenuItem = NSMenuItem()
+        let appItem = NSMenuItem()
         let appMenu = NSMenu()
-        appMenu.addItem(
-            NSMenuItem(
-                title: "Quit GroqDictate", action: #selector(NSApplication.terminate(_:)),
-                keyEquivalent: "q"))
-        appMenuItem.submenu = appMenu
-        mainMenu.addItem(appMenuItem)
+        appMenu.addItem(NSMenuItem(title: "Quit GroqDictate", action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q"))
+        appItem.submenu = appMenu
+        mainMenu.addItem(appItem)
 
-        let editMenuItem = NSMenuItem()
+        let editItem = NSMenuItem()
         let editMenu = NSMenu(title: "Edit")
-        editMenu.addItem(
-            NSMenuItem(
-                title: "Undo", action: #selector(UndoManager.undo), keyEquivalent: "z"))
-        editMenu.addItem(
-            NSMenuItem(
-                title: "Redo", action: #selector(UndoManager.redo), keyEquivalent: "Z"))
-        editMenu.addItem(NSMenuItem.separator())
-        editMenu.addItem(
-            NSMenuItem(
-                title: "Cut", action: #selector(NSText.cut(_:)), keyEquivalent: "x"))
-        editMenu.addItem(
-            NSMenuItem(
-                title: "Copy", action: #selector(NSText.copy(_:)), keyEquivalent: "c"))
-        editMenu.addItem(
-            NSMenuItem(
-                title: "Paste", action: #selector(NSText.paste(_:)), keyEquivalent: "v"))
-        editMenu.addItem(
-            NSMenuItem(
-                title: "Select All", action: #selector(NSText.selectAll(_:)),
-                keyEquivalent: "a"))
-        editMenuItem.submenu = editMenu
-        mainMenu.addItem(editMenuItem)
+        editMenu.addItem(NSMenuItem(title: "Undo", action: #selector(UndoManager.undo), keyEquivalent: "z"))
+        editMenu.addItem(NSMenuItem(title: "Redo", action: #selector(UndoManager.redo), keyEquivalent: "Z"))
+        editMenu.addItem(.separator())
+        editMenu.addItem(NSMenuItem(title: "Cut", action: #selector(NSText.cut(_:)), keyEquivalent: "x"))
+        editMenu.addItem(NSMenuItem(title: "Copy", action: #selector(NSText.copy(_:)), keyEquivalent: "c"))
+        editMenu.addItem(NSMenuItem(title: "Paste", action: #selector(NSText.paste(_:)), keyEquivalent: "v"))
+        editMenu.addItem(NSMenuItem(title: "Select All", action: #selector(NSText.selectAll(_:)), keyEquivalent: "a"))
+        editItem.submenu = editMenu
+        mainMenu.addItem(editItem)
 
         NSApp.mainMenu = mainMenu
     }
 
-    // MARK: - Status Bar Menu
+    // MARK: - Status Bar
 
     private func buildMenuBar() {
         statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.squareLength)
-        if let button = statusItem.button {
-            button.image = NSImage(
-                systemSymbolName: "waveform", accessibilityDescription: "GroqDictate")
-        }
+        statusItem.button?.image = NSImage(systemSymbolName: "waveform", accessibilityDescription: "GroqDictate")
 
         let menu = NSMenu()
-        menu.addItem(
-            NSMenuItem(title: "Right ⌘ — start / stop", action: nil, keyEquivalent: ""))
-        menu.addItem(
-            NSMenuItem(title: "Esc — cancel", action: nil, keyEquivalent: ""))
-        menu.addItem(NSMenuItem.separator())
-        menu.addItem(
-            NSMenuItem(
-                title: "Settings…", action: #selector(showSetupFromMenu),
-                keyEquivalent: ","))
-        menu.addItem(NSMenuItem.separator())
-        menu.addItem(
-            NSMenuItem(
-                title: "Quit GroqDictate", action: #selector(NSApplication.terminate(_:)),
-                keyEquivalent: "q"))
+        menu.addItem(NSMenuItem(title: "Right ⌘ — start / stop", action: nil, keyEquivalent: ""))
+        menu.addItem(NSMenuItem(title: "Esc — cancel", action: nil, keyEquivalent: ""))
+        menu.addItem(.separator())
+        menu.addItem(NSMenuItem(title: "Settings…", action: #selector(showSetupFromMenu), keyEquivalent: ","))
+        menu.addItem(.separator())
+        menu.addItem(NSMenuItem(title: "Quit GroqDictate", action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q"))
         statusItem.menu = menu
     }
 
     // MARK: - Settings
 
-    @objc private func showSetupFromMenu() {
-        showSetup()
-    }
+    @objc private func showSetupFromMenu() { showSetup() }
 
-    private func showSetup(isOnboarding: Bool = false) {
-        let previousApp = NSWorkspace.shared.frontmostApplication
-        let window = SetupWindow(previousApp: previousApp)
-        window.onComplete = { [weak self] in
+    private func showSetup(isOnboarding: Bool = false, previousApp: NSRunningApplication? = nil) {
+        let prev = isOnboarding ? nil : (previousApp ?? NSWorkspace.shared.frontmostApplication)
+        let window = SetupWindow(previousApp: prev)
+        window.onSave = { [weak self] in
             self?.setupWindow = nil
             self?.applyConfig()
-            if isOnboarding {
-                self?.requestPermissionsIfNeeded()
-            } else {
-                self?.installEventTap()
-            }
+            if isOnboarding { self?.startPermissionFlow() } else { self?.installEventTap() }
         }
         window.makeKeyAndOrderFront(nil)
         NSApp.activate(ignoringOtherApps: true)
         setupWindow = window
     }
 
-    // MARK: - Event Tap (captures and consumes Esc during recording)
+    // MARK: - Event Tap
 
     private func installEventTap() {
         removeAllMonitors()
 
-        let mask: CGEventMask =
-            (1 << CGEventType.flagsChanged.rawValue) | (1 << CGEventType.keyDown.rawValue)
+        let mask: CGEventMask = (1 << CGEventType.flagsChanged.rawValue) | (1 << CGEventType.keyDown.rawValue)
+        let ptr = Unmanaged.passUnretained(self).toOpaque()
 
-        let userInfo = Unmanaged.passUnretained(self).toOpaque()
-
-        guard
-            let tap = CGEvent.tapCreate(
-                tap: .cgSessionEventTap,
-                place: .headInsertEventTap,
-                options: .defaultTap,
-                eventsOfInterest: mask,
-                callback: { _, type, event, userInfo -> Unmanaged<CGEvent>? in
-                    guard let userInfo = userInfo else {
-                        return Unmanaged.passUnretained(event)
-                    }
-                    let delegate = Unmanaged<AppDelegate>.fromOpaque(userInfo)
-                        .takeUnretainedValue()
-                    return delegate.handleCGEvent(type: type, event: event)
-                },
-                userInfo: userInfo
-            )
-        else {
+        guard let tap = CGEvent.tapCreate(
+            tap: .cgSessionEventTap, place: .headInsertEventTap, options: .defaultTap,
+            eventsOfInterest: mask,
+            callback: { _, type, event, userInfo -> Unmanaged<CGEvent>? in
+                guard let userInfo else { return Unmanaged.passUnretained(event) }
+                return Unmanaged<AppDelegate>.fromOpaque(userInfo).takeUnretainedValue()
+                    .handleCGEvent(type: type, event: event)
+            },
+            userInfo: ptr
+        ) else {
             installNSEventMonitors()
             return
         }
@@ -233,59 +224,55 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     private func installNSEventMonitors() {
-        globalMonitor = NSEvent.addGlobalMonitorForEvents(matching: [.flagsChanged, .keyDown]) {
-            [weak self] event in
-            self?.handleNSEvent(event)
-        }
-        localMonitor = NSEvent.addLocalMonitorForEvents(matching: [.flagsChanged, .keyDown]) {
-            [weak self] event in
-            self?.handleNSEvent(event)
-            return event
-        }
+        globalMonitor = NSEvent.addGlobalMonitorForEvents(matching: [.flagsChanged, .keyDown]) { [weak self] in self?.handleNSEvent($0) }
+        localMonitor = NSEvent.addLocalMonitorForEvents(matching: [.flagsChanged, .keyDown]) { [weak self] in self?.handleNSEvent($0); return $0 }
     }
 
     private func removeAllMonitors() {
         if let tap = eventTap {
             CGEvent.tapEnable(tap: tap, enable: false)
-            if let source = runLoopSource {
-                CFRunLoopRemoveSource(CFRunLoopGetMain(), source, .commonModes)
-            }
-            eventTap = nil
-            runLoopSource = nil
+            if let src = runLoopSource { CFRunLoopRemoveSource(CFRunLoopGetMain(), src, .commonModes) }
+            eventTap = nil; runLoopSource = nil
         }
         if let m = globalMonitor { NSEvent.removeMonitor(m); globalMonitor = nil }
         if let m = localMonitor { NSEvent.removeMonitor(m); localMonitor = nil }
     }
 
-    // MARK: - Event Handlers
+    // MARK: - Event Handling
 
     private func handleCGEvent(type: CGEventType, event: CGEvent) -> Unmanaged<CGEvent>? {
+        // Re-enable tap if macOS disabled it
         if type == .tapDisabledByTimeout || type == .tapDisabledByUserInput {
-            if let tap = eventTap {
-                CGEvent.tapEnable(tap: tap, enable: true)
-            }
+            if let tap = eventTap { CGEvent.tapEnable(tap: tap, enable: true) }
             return Unmanaged.passUnretained(event)
         }
 
         let keyCode = event.getIntegerValueField(.keyboardEventKeycode)
 
-        // Esc (53) — consume during recording/processing
+        // Esc — cancel recording/processing, dismiss error
         if type == .keyDown && keyCode == 53 {
-            if state == .recording || state == .processing {
-                DispatchQueue.main.async { [weak self] in self?.cancel() }
-                return nil  // consumed
+            switch state {
+            case .recording, .processing:
+                DispatchQueue.main.async { self.cancel() }
+                return nil
+            case .error:
+                DispatchQueue.main.async { self.dismissError() }
+                return nil
+            case .idle:
+                return Unmanaged.passUnretained(event)
             }
-            return Unmanaged.passUnretained(event)
         }
 
-        // Right ⌘ (54)
+        // Right ⌘ (keyCode 54) — consume both down and up to prevent stuck modifier
         if type == .flagsChanged && keyCode == 54 {
             let cmdDown = event.flags.contains(.maskCommand)
             if cmdDown && !rightCommandDown {
                 rightCommandDown = true
-                DispatchQueue.main.async { [weak self] in self?.toggle() }
+                DispatchQueue.main.async { self.toggle() }
+                return nil
             } else if !cmdDown && rightCommandDown {
                 rightCommandDown = false
+                return nil
             }
         }
 
@@ -294,18 +281,18 @@ class AppDelegate: NSObject, NSApplicationDelegate {
 
     private func handleNSEvent(_ event: NSEvent) {
         if event.type == .keyDown && event.keyCode == 53 {
-            if state == .recording || state == .processing {
-                DispatchQueue.main.async { [weak self] in self?.cancel() }
+            switch state {
+            case .recording, .processing: DispatchQueue.main.async { self.cancel() }
+            case .error: DispatchQueue.main.async { self.dismissError() }
+            case .idle: break
             }
             return
         }
 
         guard event.type == .flagsChanged else { return }
-        let isRightCmd = event.modifierFlags.contains(.command) && event.keyCode == 54
-
-        if isRightCmd && !rightCommandDown {
+        if event.modifierFlags.contains(.command) && event.keyCode == 54 && !rightCommandDown {
             rightCommandDown = true
-            DispatchQueue.main.async { [weak self] in self?.toggle() }
+            DispatchQueue.main.async { self.toggle() }
         } else if !event.modifierFlags.contains(.command) && rightCommandDown {
             rightCommandDown = false
         }
@@ -315,160 +302,187 @@ class AppDelegate: NSObject, NSApplicationDelegate {
 
     private func toggle() {
         switch state {
-        case .idle: startRecording()
-        case .recording: stopAndTranscribe()
-        case .processing: break
+        case .idle:               startRecording()
+        case .recording:          stopAndTranscribe()
+        case .processing:         break
+        case .error(let kind):    handleErrorAction(kind)
         }
     }
 
     private func startRecording() {
-        guard state == .idle else { return }
-
-        dismissWorkItem?.cancel()
-        dismissWorkItem = nil
-
-        targetApp = NSWorkspace.shared.frontmostApplication
-
-        if let config = Config.load() {
-            recorder.inputGain = config.inputGain
+        let mic = AVCaptureDevice.authorizationStatus(for: .audio)
+        if mic == .denied || mic == .restricted {
+            showError(.micDenied, message: "Mic access denied", action: .settings)
+            return
         }
 
+        targetApp = NSWorkspace.shared.frontmostApplication
+        applyConfig()
+
+        panel.waveformView.setRecording(levelSource: recorder)
+        panel.show()
+
         do {
-            panel.waveformView.setRecording(levelSource: recorder)
-            panel.show()
             try recorder.start()
             state = .recording
         } catch {
             recorder.cleanup()
-            showError("Mic error")
+            showError(.other("Mic error"), message: "Mic error", action: .dismissOnly)
         }
-    }
-
-    private func cancel() {
-        dismissWorkItem?.cancel()
-        dismissWorkItem = nil
-
-        if state == .recording {
-            recorder.stop { _ in }
-        }
-        recorder.cleanup()
-        state = .idle
-        panel.dismiss()
     }
 
     private func stopAndTranscribe() {
-        guard state == .recording else { return }
+        guard case .recording = state else { return }
         guard let config = Config.load() else {
-            showError("No API key")
+            showError(.invalidKey, message: "Invalid API key", action: .settings)
             return
         }
 
         state = .processing
         panel.waveformView.setProcessing()
+        startSlowTimer()
 
         recorder.stop { [weak self] fileURL in
-            guard let self = self, self.state == .processing else { return }
+            guard let self, case .processing = state else { return }
+            lastAudioFileURL = fileURL
+            transcribe(fileURL: fileURL, config: config)
+        }
+    }
 
-            GroqAPI.transcribe(fileURL: fileURL, config: config) { [weak self] result in
-                DispatchQueue.main.async {
-                    guard let self = self else { return }
+    private func transcribe(fileURL: URL, config: Config) {
+        GroqAPI.transcribe(fileURL: fileURL, config: config) { [weak self] result in
+            DispatchQueue.main.async {
+                guard let self, case .processing = self.state else { return }
+                self.cancelSlowTimer()
+
+                switch result {
+                case .success(let text):
                     self.recorder.cleanup()
-
-                    guard self.state == .processing else { return }
-
-                    switch result {
-                    case .success(let text):
-                        NSPasteboard.general.clearContents()
-                        NSPasteboard.general.setString(text, forType: .string)
-
-                        self.panel.dismiss()
-                        self.state = .idle
-
-                        if let app = self.targetApp, !app.isTerminated {
-                            app.activate()
-                        }
-                        DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) {
-                            self.simulatePaste()
-                        }
-
-                    case .failure(let error):
-                        self.showError(
-                            String(error.localizedDescription.prefix(50)))
-                    }
+                    self.lastAudioFileURL = nil
+                    self.pasteText(text)
+                case .failure(let error):
+                    self.showTranscriptionError(error)
                 }
             }
         }
     }
 
-    private func showError(_ message: String) {
-        state = .idle
-        panel.waveformView.showError(message)
-        panel.show()
-
-        let work = DispatchWorkItem { [weak self] in
-            self?.panel.dismiss()
+    private func retryTranscription() {
+        guard let url = lastAudioFileURL, FileManager.default.fileExists(atPath: url.path) else {
+            state = .idle; panel.dismiss(); startRecording()
+            return
         }
-        dismissWorkItem = work
-        DispatchQueue.main.asyncAfter(deadline: .now() + 3, execute: work)
+        guard let config = Config.load() else {
+            showError(.invalidKey, message: "Invalid API key", action: .settings)
+            return
+        }
+
+        state = .processing
+        panel.waveformView.setProcessing()
+        startSlowTimer()
+        transcribe(fileURL: url, config: config)
+    }
+
+    private func cancel() {
+        cancelSlowTimer()
+        if case .recording = state { recorder.stop { _ in } }
+        recorder.cleanup()
+        lastAudioFileURL = nil
+        state = .idle
+        panel.dismiss()
+        refocus()
+    }
+
+    private func dismissError() {
+        cancelSlowTimer()
+        recorder.cleanup()
+        lastAudioFileURL = nil
+        state = .idle
+        panel.dismiss()
+        refocus()
+    }
+
+    private func handleErrorAction(_ kind: ErrorKind) {
+        switch kind {
+        case .retryable:
+            retryTranscription()
+        case .tooLarge:
+            recorder.cleanup(); lastAudioFileURL = nil; startRecording()
+        case .invalidKey:
+            panel.dismiss(); state = .idle; showSetup()
+        case .micDenied:
+            if let url = URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_Microphone") {
+                NSWorkspace.shared.open(url)
+            }
+            panel.dismiss(); state = .idle
+        case .other:
+            break
+        }
+    }
+
+    // MARK: - Helpers
+
+    private func showTranscriptionError(_ error: GroqAPI.TranscriptionError) {
+        let msg = error.errorDescription ?? "Unknown error"
+        switch error {
+        case .rateLimited, .serverError, .timedOut, .emptyTranscription:
+            showError(.retryable(msg), message: msg, action: .retry)
+        case .tooLarge:
+            showError(.tooLarge, message: msg, action: .newRecording)
+        case .invalidKey:
+            showError(.invalidKey, message: msg, action: .settings)
+        case .other:
+            showError(.other(msg), message: msg, action: .dismissOnly)
+        }
+    }
+
+    private func showError(_ kind: ErrorKind, message: String, action: WaveformView.ErrorAction) {
+        state = .error(kind)
+        panel.waveformView.showError(message, action: action)
+        panel.show()
+    }
+
+    private func pasteText(_ text: String) {
+        NSPasteboard.general.clearContents()
+        NSPasteboard.general.setString(text, forType: .string)
+        panel.dismiss()
+        state = .idle
+        refocus()
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) { self.simulatePaste() }
+    }
+
+    private func refocus() {
+        if let app = targetApp, !app.isTerminated { app.activate() }
     }
 
     private func simulatePaste() {
-        let source = CGEventSource(stateID: .combinedSessionState)
-        source?.setLocalEventsFilterDuringSuppressionState(
+        let src = CGEventSource(stateID: .combinedSessionState)
+        src?.setLocalEventsFilterDuringSuppressionState(
             [.permitLocalMouseEvents, .permitSystemDefinedEvents],
-            state: .eventSuppressionStateSuppressionInterval
-        )
-        let vKey = CGKeyCode(0x09)
-        let keyDown = CGEvent(keyboardEventSource: source, virtualKey: vKey, keyDown: true)
-        let keyUp = CGEvent(keyboardEventSource: source, virtualKey: vKey, keyDown: false)
-        keyDown?.flags = .maskCommand
-        keyUp?.flags = .maskCommand
-        keyDown?.post(tap: .cgAnnotatedSessionEventTap)
-        keyUp?.post(tap: .cgAnnotatedSessionEventTap)
+            state: .eventSuppressionStateSuppressionInterval)
+        let v: CGKeyCode = 0x09
+        let down = CGEvent(keyboardEventSource: src, virtualKey: v, keyDown: true)
+        let up = CGEvent(keyboardEventSource: src, virtualKey: v, keyDown: false)
+        down?.flags = .maskCommand
+        up?.flags = .maskCommand
+        down?.post(tap: .cgAnnotatedSessionEventTap)
+        up?.post(tap: .cgAnnotatedSessionEventTap)
     }
-}
 
-// MARK: - Audio Device Helper
-
-enum AudioDeviceHelper {
-    static func setPreferredInput(uid: String) {
-        var address = AudioObjectPropertyAddress(
-            mSelector: kAudioHardwarePropertyDevices,
-            mScope: kAudioObjectPropertyScopeGlobal,
-            mElement: kAudioObjectPropertyElementMain
-        )
-
-        var dataSize: UInt32 = 0
-        AudioObjectGetPropertyDataSize(
-            AudioObjectID(kAudioObjectSystemObject), &address, 0, nil, &dataSize)
-        let deviceCount = Int(dataSize) / MemoryLayout<AudioDeviceID>.size
-        var devices = [AudioDeviceID](repeating: 0, count: deviceCount)
-        AudioObjectGetPropertyData(
-            AudioObjectID(kAudioObjectSystemObject), &address, 0, nil, &dataSize, &devices)
-
-        for device in devices {
-            var uidAddress = AudioObjectPropertyAddress(
-                mSelector: kAudioDevicePropertyDeviceUID,
-                mScope: kAudioObjectPropertyScopeGlobal,
-                mElement: kAudioObjectPropertyElementMain
-            )
-            var cfUID: CFString = "" as CFString
-            var uidSize = UInt32(MemoryLayout<CFString>.size)
-            AudioObjectGetPropertyData(device, &uidAddress, 0, nil, &uidSize, &cfUID)
-
-            if (cfUID as String) == uid {
-                var defaultAddress = AudioObjectPropertyAddress(
-                    mSelector: kAudioHardwarePropertyDefaultInputDevice,
-                    mScope: kAudioObjectPropertyScopeGlobal,
-                    mElement: kAudioObjectPropertyElementMain
-                )
-                var deviceID = device
-                AudioObjectSetPropertyData(
-                    AudioObjectID(kAudioObjectSystemObject), &defaultAddress, 0, nil,
-                    UInt32(MemoryLayout<AudioDeviceID>.size), &deviceID)
-                break
-            }
+    /// Shows "Taking longer than usual…" after 5 seconds of processing.
+    private func startSlowTimer() {
+        cancelSlowTimer()
+        let work = DispatchWorkItem { [weak self] in
+            guard let self, case .processing = state else { return }
+            panel.waveformView.setSlowTranscription()
         }
+        slowTimer = work
+        DispatchQueue.main.asyncAfter(deadline: .now() + 5, execute: work)
+    }
+
+    private func cancelSlowTimer() {
+        slowTimer?.cancel()
+        slowTimer = nil
     }
 }
 

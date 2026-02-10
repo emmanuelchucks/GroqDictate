@@ -8,16 +8,18 @@ class SetupWindow: NSWindow, NSWindowDelegate {
     private let gainSlider = NSSlider()
     private let gainLabel = NSTextField(labelWithString: "5.0x")
     private let statusLabel = NSTextField(labelWithString: "")
-    var onComplete: (() -> Void)?
+
+    /// Called only when Done was clicked with a valid key.
+    var onSave: (() -> Void)?
     private var previousApp: NSRunningApplication?
+    private var didSave = false
 
     init(previousApp: NSRunningApplication? = nil) {
         super.init(
             contentRect: NSRect(x: 0, y: 0, width: 460, height: 360),
             styleMask: [.titled, .closable],
             backing: .buffered,
-            defer: false
-        )
+            defer: false)
         title = "GroqDictate Settings"
         isReleasedWhenClosed = false
         delegate = self
@@ -26,18 +28,18 @@ class SetupWindow: NSWindow, NSWindowDelegate {
         center()
     }
 
+    // MARK: - UI
+
     private func buildUI() {
         let container = NSView(frame: NSRect(x: 0, y: 0, width: 460, height: 360))
         contentView = container
-
         var y: CGFloat = 320
 
-        // --- API Key ---
+        // API Key
         addLabel("Groq API Key", at: &y, in: container, bold: true)
         y -= 4
-
         apiKeyField.frame = NSRect(x: 24, y: y, width: 412, height: 22)
-        apiKeyField.font = NSFont.monospacedSystemFont(ofSize: 12, weight: .regular)
+        apiKeyField.font = .monospacedSystemFont(ofSize: 12, weight: .regular)
         apiKeyField.placeholderString = "gsk_..."
         apiKeyField.usesSingleLineMode = true
         apiKeyField.lineBreakMode = .byTruncatingTail
@@ -50,24 +52,22 @@ class SetupWindow: NSWindow, NSWindowDelegate {
         y -= 16
 
         let hint = NSTextField(labelWithString: "Free from console.groq.com → Stored in Keychain")
-        hint.font = NSFont.systemFont(ofSize: 10)
-        hint.textColor = NSColor.tertiaryLabelColor
+        hint.font = .systemFont(ofSize: 10)
+        hint.textColor = .tertiaryLabelColor
         hint.frame = NSRect(x: 24, y: y, width: 412, height: 14)
         container.addSubview(hint)
         y -= 28
 
-        // --- Model ---
+        // Model
         addLabel("Model", at: &y, in: container, bold: true)
         y -= 4
-
         modelPopup.frame = NSRect(x: 24, y: y, width: 412, height: 26)
         let models = [
             ("distil-whisper-large-v3-en", "Distil Whisper V3 (English, fastest)"),
             ("whisper-large-v3-turbo", "Whisper Large V3 Turbo (fast)"),
             ("whisper-large-v3", "Whisper Large V3 (most accurate)"),
         ]
-        let savedModel =
-            UserDefaults.standard.string(forKey: "groq-model") ?? "whisper-large-v3-turbo"
+        let savedModel = UserDefaults.standard.string(forKey: "groq-model") ?? "whisper-large-v3-turbo"
         for (i, (id, name)) in models.enumerated() {
             modelPopup.addItem(withTitle: name)
             modelPopup.item(at: i)?.representedObject = id
@@ -76,45 +76,32 @@ class SetupWindow: NSWindow, NSWindowDelegate {
         container.addSubview(modelPopup)
         y -= 34
 
-        // --- Microphone ---
+        // Microphone
         addLabel("Microphone", at: &y, in: container, bold: true)
         y -= 4
-
         micPopup.frame = NSRect(x: 24, y: y, width: 412, height: 26)
-
-        // Add "System Default" option first
         micPopup.addItem(withTitle: "System Default")
         micPopup.item(at: 0)?.representedObject = "__system_default__"
 
         let devices = AudioRecorder.availableInputDevices()
         let savedMic = UserDefaults.standard.string(forKey: "mic-uid") ?? ""
-
-        var selectedIndex = 0  // default to System Default
+        var selectedIndex = 0
         for device in devices {
-            // Filter out macOS internal aggregate devices
-            if device.uid.contains("CADefaultDeviceAggregate") { continue }
-            if device.name.contains("CADefaultDevice") { continue }
-
+            if device.uid.contains("CADefaultDeviceAggregate") || device.name.contains("CADefaultDevice") { continue }
             let idx = micPopup.numberOfItems
             micPopup.addItem(withTitle: device.name)
             micPopup.item(at: idx)?.representedObject = device.uid
-
-            if device.uid == savedMic {
-                selectedIndex = idx
-            } else if savedMic.isEmpty && device.name.contains("External") {
-                selectedIndex = idx
-            }
+            if device.uid == savedMic { selectedIndex = idx }
         }
         micPopup.selectItem(at: selectedIndex)
         container.addSubview(micPopup)
         y -= 34
 
-        // --- Input Gain ---
+        // Input Gain
         addLabel("Input Gain", at: &y, in: container, bold: true)
         y -= 4
-
         let savedGain = UserDefaults.standard.float(forKey: "input-gain")
-        let currentGain = savedGain > 0 ? savedGain : 5.0  // default to max
+        let currentGain = savedGain > 0 ? savedGain : 5.0
 
         gainSlider.frame = NSRect(x: 24, y: y, width: 346, height: 22)
         gainSlider.minValue = 1.0
@@ -125,14 +112,13 @@ class SetupWindow: NSWindow, NSWindowDelegate {
         container.addSubview(gainSlider)
 
         gainLabel.frame = NSRect(x: 378, y: y, width: 60, height: 22)
-        gainLabel.font = NSFont.monospacedDigitSystemFont(ofSize: 13, weight: .medium)
+        gainLabel.font = .monospacedDigitSystemFont(ofSize: 13, weight: .medium)
         gainLabel.stringValue = String(format: "%.1fx", currentGain)
         container.addSubview(gainLabel)
-        y -= 36
 
-        // --- Status + Save ---
+        // Status + Done
         statusLabel.frame = NSRect(x: 24, y: 20, width: 280, height: 20)
-        statusLabel.font = NSFont.systemFont(ofSize: 11)
+        statusLabel.font = .systemFont(ofSize: 11)
         container.addSubview(statusLabel)
 
         let saveButton = NSButton(title: "Done", target: self, action: #selector(save))
@@ -142,19 +128,16 @@ class SetupWindow: NSWindow, NSWindowDelegate {
         container.addSubview(saveButton)
     }
 
-    private func addLabel(
-        _ text: String, at y: inout CGFloat, in container: NSView, bold: Bool
-    ) {
+    private func addLabel(_ text: String, at y: inout CGFloat, in container: NSView, bold: Bool) {
         let label = NSTextField(labelWithString: text)
-        label.font =
-            bold
-            ? NSFont.systemFont(ofSize: 13, weight: .semibold)
-            : NSFont.systemFont(ofSize: 13)
+        label.font = bold ? .systemFont(ofSize: 13, weight: .semibold) : .systemFont(ofSize: 13)
         label.textColor = .labelColor
         label.frame = NSRect(x: 24, y: y, width: 412, height: 18)
         container.addSubview(label)
         y -= 20
     }
+
+    // MARK: - Actions
 
     @objc private func gainChanged() {
         gainLabel.stringValue = String(format: "%.1fx", gainSlider.doubleValue)
@@ -162,48 +145,35 @@ class SetupWindow: NSWindow, NSWindowDelegate {
 
     @objc private func save() {
         let key = apiKeyField.stringValue.trimmingCharacters(in: .whitespacesAndNewlines)
-
-        guard !key.isEmpty else {
-            showStatus("API key cannot be empty.", error: true)
-            return
-        }
-        guard key.hasPrefix("gsk_") else {
-            showStatus("Invalid key — should start with gsk_", error: true)
-            return
-        }
+        guard !key.isEmpty else { showStatus("API key cannot be empty.", error: true); return }
+        guard key.hasPrefix("gsk_") else { showStatus("Invalid key — should start with gsk_", error: true); return }
 
         do { try Config.saveAPIKey(key) } catch {
             showStatus("Keychain error: \(error.localizedDescription)", error: true)
             return
         }
 
-        // Save model
-        if let modelID = modelPopup.selectedItem?.representedObject as? String {
-            UserDefaults.standard.set(modelID, forKey: "groq-model")
+        if let id = modelPopup.selectedItem?.representedObject as? String {
+            UserDefaults.standard.set(id, forKey: "groq-model")
         }
-
-        // Save mic
         if let uid = micPopup.selectedItem?.representedObject as? String {
             UserDefaults.standard.set(uid == "__system_default__" ? "" : uid, forKey: "mic-uid")
         }
-
-        // Save gain
         UserDefaults.standard.set(Float(gainSlider.doubleValue), forKey: "input-gain")
 
+        didSave = true
         close()
-        previousApp?.activate()
-        onComplete?()
     }
 
     private func showStatus(_ text: String, error: Bool) {
         statusLabel.stringValue = text
-        statusLabel.textColor = error ? .systemRed : NSColor.secondaryLabelColor
+        statusLabel.textColor = error ? .systemRed : .secondaryLabelColor
     }
 
     // MARK: - NSWindowDelegate
 
     func windowWillClose(_ notification: Notification) {
         previousApp?.activate()
-        onComplete?()
+        if didSave { onSave?() }
     }
 }
