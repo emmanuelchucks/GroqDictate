@@ -53,12 +53,10 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     private func requestPermissionsIfNeeded() {
         switch AVCaptureDevice.authorizationStatus(for: .audio) {
         case .authorized:
-            recorder.warmup()  // pre-allocate audio resources
             requestAccessibilityThenStart()
         case .notDetermined:
-            AVCaptureDevice.requestAccess(for: .audio) { [weak self] granted in
+            AVCaptureDevice.requestAccess(for: .audio) { [weak self] _ in
                 DispatchQueue.main.asyncAfter(deadline: .now() + 0.6) {
-                    if granted { self?.recorder.warmup() }
                     self?.requestAccessibilityThenStart()
                 }
             }
@@ -70,7 +68,6 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     private func requestAccessibilityThenStart() {
-        // Start with whatever we can get right now (NSEvent fallback if no Accessibility)
         installEventTap()
 
         if AXIsProcessTrusted() { return }  // already granted
@@ -198,7 +195,6 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     // MARK: - Event Tap (captures and consumes Esc during recording)
 
     private func installEventTap() {
-        // Clean up any existing monitors/taps
         removeAllMonitors()
 
         let mask: CGEventMask =
@@ -223,7 +219,6 @@ class AppDelegate: NSObject, NSApplicationDelegate {
                 userInfo: userInfo
             )
         else {
-            // Accessibility not granted — fall back to NSEvent monitors (can't consume Esc)
             installNSEventMonitors()
             return
         }

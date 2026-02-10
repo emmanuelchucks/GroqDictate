@@ -97,11 +97,6 @@ class AudioRecorder {
         return result
     }
 
-    /// Pre-allocate audio resources so first recording starts faster
-    func warmup() {
-        audioEngine.prepare()
-    }
-
     // MARK: - Recording
 
     func start() throws {
