@@ -26,6 +26,11 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     private var dismissWorkItem: DispatchWorkItem?
     private var accessibilityObserver: NSObjectProtocol?
 
+    /// Prevent ghost window when relaunched from Raycast/Spotlight
+    func applicationShouldHandleReopen(_ sender: NSApplication, hasVisibleWindows flag: Bool) -> Bool {
+        return false
+    }
+
     func applicationDidFinishLaunching(_ notification: Notification) {
         buildAppMenu()
         buildMenuBar()
