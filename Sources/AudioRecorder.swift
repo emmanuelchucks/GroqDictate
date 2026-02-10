@@ -69,10 +69,9 @@ class AudioRecorder {
                     device, &inputChannels, 0, nil, &chanSize, bufferListPtr) == noErr
             else { continue }
 
-            let bufferList = bufferListPtr.assumingMemoryBound(to: AudioBufferList.self).pointee
-            let totalChannels = (0..<Int(bufferList.mNumberBuffers)).reduce(0) { total, _ in
-                total + Int(bufferList.mBuffers.mNumberChannels)
-            }
+            let ablPointer = UnsafeMutableAudioBufferListPointer(
+                bufferListPtr.assumingMemoryBound(to: AudioBufferList.self))
+            let totalChannels = ablPointer.reduce(0) { $0 + Int($1.mNumberChannels) }
             guard totalChannels > 0 else { continue }
 
             var nameAddress = AudioObjectPropertyAddress(
@@ -137,7 +136,13 @@ class AudioRecorder {
             else { return }
 
             var error: NSError?
+            var consumed = false
             converter.convert(to: convertedBuffer, error: &error) { _, outStatus in
+                guard !consumed else {
+                    outStatus.pointee = .noDataNow
+                    return nil
+                }
+                consumed = true
                 outStatus.pointee = .haveData
                 return buffer
             }

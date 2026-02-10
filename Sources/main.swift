@@ -343,6 +343,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
             }
             state = .recording
         } catch {
+            recorder.cleanup()
             showError("Mic error")
         }
     }

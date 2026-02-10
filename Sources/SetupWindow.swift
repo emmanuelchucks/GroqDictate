@@ -2,7 +2,7 @@ import Cocoa
 
 /// Settings window: API key, mic selection, model, input gain.
 class SetupWindow: NSWindow, NSWindowDelegate {
-    private let apiKeyField = NSTextField()
+    private let apiKeyField = NSSecureTextField()
     private let micPopup = NSPopUpButton()
     private let modelPopup = NSPopUpButton()
     private let gainSlider = NSSlider()
@@ -202,7 +202,7 @@ class SetupWindow: NSWindow, NSWindowDelegate {
     // MARK: - NSWindowDelegate
 
     func windowWillClose(_ notification: Notification) {
-        // Return focus to the previously active app when closed via X button
         previousApp?.activate()
+        onComplete?()
     }
 }
