@@ -24,6 +24,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     private var rightCommandDown = false
     private var targetApp: NSRunningApplication?
     private var dismissWorkItem: DispatchWorkItem?
+    private var accessibilityObserver: NSObjectProtocol?
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         buildAppMenu()
@@ -80,15 +81,21 @@ class AppDelegate: NSObject, NSApplicationDelegate {
 
         // Listen for accessibility permission changes via DistributedNotification
         // macOS posts "com.apple.accessibility.api" when the user toggles Accessibility
-        DistributedNotificationCenter.default().addObserver(
+        accessibilityObserver = DistributedNotificationCenter.default().addObserver(
             forName: NSNotification.Name("com.apple.accessibility.api"),
             object: nil,
             queue: .main
         ) { [weak self] _ in
             // Small delay — the notification fires before TCC db is fully updated
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
+                guard let self = self else { return }
                 if AXIsProcessTrusted() {
-                    self?.installEventTap()  // upgrade to CGEventTap
+                    // Remove observer — no longer needed
+                    if let obs = self.accessibilityObserver {
+                        DistributedNotificationCenter.default().removeObserver(obs)
+                        self.accessibilityObserver = nil
+                    }
+                    self.installEventTap()
                 }
             }
         }
