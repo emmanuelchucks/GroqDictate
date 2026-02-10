@@ -2,7 +2,7 @@ import Cocoa
 
 /// Settings window: API key, mic selection, model, input gain.
 class SetupWindow: NSWindow, NSWindowDelegate {
-    private let apiKeyField = NSSecureTextField()
+    private let apiKeyField = NSTextField()
     private let micPopup = NSPopUpButton()
     private let modelPopup = NSPopUpButton()
     private let gainSlider = NSSlider()
