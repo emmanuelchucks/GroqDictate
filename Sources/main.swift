@@ -18,10 +18,11 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     private var statusItem: NSStatusItem!
     private var eventTap: CFMachPort?
     private var runLoopSource: CFRunLoopSource?
+    private var globalMonitor: Any?
+    private var localMonitor: Any?
     private var setupWindow: SetupWindow?
     private var rightCommandDown = false
     private var targetApp: NSRunningApplication?
-    // No need to track the URLSessionDataTask — state guards prevent stale results from being used
     private var dismissWorkItem: DispatchWorkItem?
 
     func applicationDidFinishLaunching(_ notification: Notification) {
@@ -29,9 +30,8 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         buildMenuBar()
 
         if Config.hasAPIKey {
-            requestPermissionsIfNeeded()
             applyConfig()
-            installEventTap()
+            requestPermissionsIfNeeded()
         } else {
             showSetup(isOnboarding: true)
         }
@@ -46,29 +46,51 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         }
     }
 
-    // MARK: - Permissions (sequential: mic → accessibility)
+    // MARK: - Permissions (mic first → accessibility second, one at a time)
 
     private func requestPermissionsIfNeeded() {
         switch AVCaptureDevice.authorizationStatus(for: .audio) {
         case .authorized:
-            requestAccessibilityIfNeeded()
+            // Mic done — now accessibility
+            requestAccessibilityThenStart()
         case .notDetermined:
-            AVCaptureDevice.requestAccess(for: .audio) { [weak self] granted in
-                DispatchQueue.main.async {
-                    if granted { self?.requestAccessibilityIfNeeded() }
+            // Ask for mic first. After user responds, ask for accessibility.
+            AVCaptureDevice.requestAccess(for: .audio) { [weak self] _ in
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.6) {
+                    self?.requestAccessibilityThenStart()
                 }
             }
         case .denied, .restricted:
-            requestAccessibilityIfNeeded()
+            // Mic denied — still need to set up hotkeys
+            requestAccessibilityThenStart()
         @unknown default:
-            requestAccessibilityIfNeeded()
+            requestAccessibilityThenStart()
         }
     }
 
-    private func requestAccessibilityIfNeeded() {
-        if !AXIsProcessTrusted() {
-            let options = [kAXTrustedCheckOptionPrompt.takeUnretainedValue(): true] as CFDictionary
-            _ = AXIsProcessTrustedWithOptions(options)
+    private func requestAccessibilityThenStart() {
+        // Start with whatever we can get right now (NSEvent fallback if no Accessibility)
+        installEventTap()
+
+        if AXIsProcessTrusted() { return }  // already granted
+
+        // Show the system prompt
+        let options = [kAXTrustedCheckOptionPrompt.takeUnretainedValue(): true] as CFDictionary
+        _ = AXIsProcessTrustedWithOptions(options)
+
+        // Listen for accessibility permission changes via DistributedNotification
+        // macOS posts "com.apple.accessibility.api" when the user toggles Accessibility
+        DistributedNotificationCenter.default().addObserver(
+            forName: NSNotification.Name("com.apple.accessibility.api"),
+            object: nil,
+            queue: .main
+        ) { [weak self] _ in
+            // Small delay — the notification fires before TCC db is fully updated
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
+                if AXIsProcessTrusted() {
+                    self?.installEventTap()  // upgrade to CGEventTap
+                }
+            }
         }
     }
 
@@ -153,9 +175,12 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         window.onComplete = { [weak self] in
             self?.setupWindow = nil
             self?.applyConfig()
-            self?.installEventTap()
             if isOnboarding {
+                // Permissions come after settings, one at a time
                 self?.requestPermissionsIfNeeded()
+            } else {
+                // Returning user editing settings — just reinstall tap
+                self?.installEventTap()
             }
         }
         window.makeKeyAndOrderFront(nil)
@@ -163,32 +188,22 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         setupWindow = window
     }
 
-    // MARK: - Event Tap (captures and consumes hotkeys)
+    // MARK: - Event Tap (captures and consumes Esc during recording)
 
-    /// CGEventTap lets us intercept AND consume events (unlike NSEvent global monitors).
-    /// This prevents Esc from leaking to the focused app during recording.
     private func installEventTap() {
-        // Remove existing tap if any
-        if let tap = eventTap {
-            CGEvent.tapEnable(tap: tap, enable: false)
-            if let source = runLoopSource {
-                CFRunLoopRemoveSource(CFRunLoopGetMain(), source, .commonModes)
-            }
-            eventTap = nil
-            runLoopSource = nil
-        }
+        // Clean up any existing monitors/taps
+        removeAllMonitors()
 
         let mask: CGEventMask =
             (1 << CGEventType.flagsChanged.rawValue) | (1 << CGEventType.keyDown.rawValue)
 
-        // Store self as userInfo pointer for the C callback
         let userInfo = Unmanaged.passUnretained(self).toOpaque()
 
         guard
             let tap = CGEvent.tapCreate(
                 tap: .cgSessionEventTap,
                 place: .headInsertEventTap,
-                options: .defaultTap,  // .defaultTap = can modify/consume events
+                options: .defaultTap,
                 eventsOfInterest: mask,
                 callback: { _, type, event, userInfo -> Unmanaged<CGEvent>? in
                     guard let userInfo = userInfo else {
@@ -201,7 +216,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
                 userInfo: userInfo
             )
         else {
-            // Accessibility not granted yet — fall back to NSEvent monitors
+            // Accessibility not granted — fall back to NSEvent monitors (can't consume Esc)
             installNSEventMonitors()
             return
         }
@@ -212,22 +227,34 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         CGEvent.tapEnable(tap: tap, enable: true)
     }
 
-    /// Fallback for when Accessibility isn't granted (can't consume events).
     private func installNSEventMonitors() {
-        NSEvent.addGlobalMonitorForEvents(matching: [.flagsChanged, .keyDown]) {
+        globalMonitor = NSEvent.addGlobalMonitorForEvents(matching: [.flagsChanged, .keyDown]) {
             [weak self] event in
             self?.handleNSEvent(event)
         }
-        NSEvent.addLocalMonitorForEvents(matching: [.flagsChanged, .keyDown]) {
+        localMonitor = NSEvent.addLocalMonitorForEvents(matching: [.flagsChanged, .keyDown]) {
             [weak self] event in
             self?.handleNSEvent(event)
             return event
         }
     }
 
-    /// CGEventTap callback — returns nil to consume the event, or the event to pass through.
+    private func removeAllMonitors() {
+        if let tap = eventTap {
+            CGEvent.tapEnable(tap: tap, enable: false)
+            if let source = runLoopSource {
+                CFRunLoopRemoveSource(CFRunLoopGetMain(), source, .commonModes)
+            }
+            eventTap = nil
+            runLoopSource = nil
+        }
+        if let m = globalMonitor { NSEvent.removeMonitor(m); globalMonitor = nil }
+        if let m = localMonitor { NSEvent.removeMonitor(m); localMonitor = nil }
+    }
+
+    // MARK: - Event Handlers
+
     private func handleCGEvent(type: CGEventType, event: CGEvent) -> Unmanaged<CGEvent>? {
-        // Handle tap being disabled by the system (e.g. timeout)
         if type == .tapDisabledByTimeout || type == .tapDisabledByUserInput {
             if let tap = eventTap {
                 CGEvent.tapEnable(tap: tap, enable: true)
@@ -237,19 +264,18 @@ class AppDelegate: NSObject, NSApplicationDelegate {
 
         let keyCode = event.getIntegerValueField(.keyboardEventKeycode)
 
-        // Esc key (53) — consume when recording/processing to prevent leak
+        // Esc (53) — consume during recording/processing
         if type == .keyDown && keyCode == 53 {
             if state == .recording || state == .processing {
                 DispatchQueue.main.async { [weak self] in self?.cancel() }
-                return nil  // consumed — Esc doesn't reach the focused app
+                return nil  // consumed
             }
-            return Unmanaged.passUnretained(event)  // pass through when idle
+            return Unmanaged.passUnretained(event)
         }
 
-        // Right ⌘ (keyCode 54)
+        // Right ⌘ (54)
         if type == .flagsChanged && keyCode == 54 {
-            let flags = event.flags
-            let cmdDown = flags.contains(.maskCommand)
+            let cmdDown = event.flags.contains(.maskCommand)
             if cmdDown && !rightCommandDown {
                 rightCommandDown = true
                 DispatchQueue.main.async { [weak self] in self?.toggle() }
@@ -258,10 +284,9 @@ class AppDelegate: NSObject, NSApplicationDelegate {
             }
         }
 
-        return Unmanaged.passUnretained(event)  // pass through
+        return Unmanaged.passUnretained(event)
     }
 
-    /// NSEvent fallback handler (can't consume events).
     private func handleNSEvent(_ event: NSEvent) {
         if event.type == .keyDown && event.keyCode == 53 {
             if state == .recording || state == .processing {
@@ -294,7 +319,6 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     private func startRecording() {
         guard state == .idle else { return }
 
-        // Cancel any pending error dismiss timer
         dismissWorkItem?.cancel()
         dismissWorkItem = nil
 
@@ -346,7 +370,6 @@ class AppDelegate: NSObject, NSApplicationDelegate {
                     guard let self = self else { return }
                     self.recorder.cleanup()
 
-                    // Ignore result if user already cancelled
                     guard self.state == .processing else { return }
 
                     switch result {
@@ -378,7 +401,6 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         panel.waveformView.showError(message)
         panel.show()
 
-        // Auto-dismiss after 3s, but cancellable if user starts a new recording
         let work = DispatchWorkItem { [weak self] in
             self?.panel.dismiss()
         }
@@ -386,7 +408,6 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         DispatchQueue.main.asyncAfter(deadline: .now() + 3, execute: work)
     }
 
-    /// Simulate Cmd+V. Requires Accessibility; silently no-ops if not granted.
     private func simulatePaste() {
         let source = CGEventSource(stateID: .combinedSessionState)
         source?.setLocalEventsFilterDuringSuppressionState(

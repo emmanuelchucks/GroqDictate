@@ -189,14 +189,9 @@ class SetupWindow: NSWindow, NSWindowDelegate {
         // Save gain
         UserDefaults.standard.set(Float(gainSlider.doubleValue), forKey: "input-gain")
 
-        showStatus("Saved", error: false)
-
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.4) { [weak self] in
-            self?.close()
-            // Return focus to the previously active application
-            self?.previousApp?.activate()
-            self?.onComplete?()
-        }
+        close()
+        previousApp?.activate()
+        onComplete?()
     }
 
     private func showStatus(_ text: String, error: Bool) {

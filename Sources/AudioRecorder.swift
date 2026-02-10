@@ -21,13 +21,12 @@ class AudioRecorder {
     private var levelCallback: ((Float) -> Void)?
     private var currentLevel: Float = 0
 
-    // Serial queue for file writes (keep I/O off the audio thread)
+    // Serial queue for file writes (keeps I/O off the real-time audio thread)
     private let writeQueue = DispatchQueue(label: "com.groqdictate.audiowrite")
 
-    // Threshold: only convert to FLAC if WAV exceeds this size (saves time for short recordings)
+    // Only compress to FLAC if WAV exceeds this size.
     // Groq docs: "For lower latency, convert your files to wav format"
-    // So WAV is actually faster for Groq to process — FLAC only helps reduce upload time for large files
-    private static let flacThresholdBytes = 5 * 1024 * 1024  // 5MB ≈ 2.5 min of 16kHz mono
+    private static let flacThresholdBytes = 5 * 1024 * 1024  // 5MB ≈ 2.5 min
 
     // MARK: - Device Enumeration
 
@@ -107,18 +106,21 @@ class AudioRecorder {
         let inputNode = audioEngine.inputNode
         let hwFormat = inputNode.inputFormat(forBus: 0)
 
-        // Record as 16-bit PCM (half the size of float32, sufficient for speech)
+        // Record as float32 at 16kHz mono (stable for AVAudioFile writes)
         let recordFormat = AVAudioFormat(
-            commonFormat: .pcmFormatInt16, sampleRate: 16000, channels: 1, interleaved: true)!
+            commonFormat: .pcmFormatFloat32, sampleRate: 16000, channels: 1, interleaved: false)!
 
         try? FileManager.default.removeItem(at: wavURL)
-        audioFile = try AVAudioFile(forWriting: wavURL, settings: recordFormat.settings)
+        audioFile = try AVAudioFile(forWriting: wavURL, settings: [
+            AVFormatIDKey: kAudioFormatLinearPCM,
+            AVSampleRateKey: 16000,
+            AVNumberOfChannelsKey: 1,
+            AVLinearPCMBitDepthKey: 16,
+            AVLinearPCMIsFloatKey: false,
+            AVLinearPCMIsBigEndianKey: false,
+        ])
 
-        // Intermediate float format for gain/RMS computation
-        let floatFormat = AVAudioFormat(
-            commonFormat: .pcmFormatFloat32, sampleRate: 16000, channels: 1, interleaved: false)!
-        let toFloat = AVAudioConverter(from: hwFormat, to: floatFormat)!
-        let toInt16 = AVAudioConverter(from: floatFormat, to: recordFormat)!
+        let converter = AVAudioConverter(from: hwFormat, to: recordFormat)!
         let gain = inputGain
 
         inputNode.installTap(onBus: 0, bufferSize: 4096, format: hwFormat) {
@@ -129,21 +131,20 @@ class AudioRecorder {
                 Double(buffer.frameLength) * 16000.0 / hwFormat.sampleRate)
             guard frameCount > 0 else { return }
 
-            // Convert to float for gain + RMS
             guard
-                let floatBuffer = AVAudioPCMBuffer(
-                    pcmFormat: floatFormat, frameCapacity: frameCount)
+                let convertedBuffer = AVAudioPCMBuffer(
+                    pcmFormat: recordFormat, frameCapacity: frameCount)
             else { return }
 
             var error: NSError?
-            toFloat.convert(to: floatBuffer, error: &error) { _, outStatus in
+            converter.convert(to: convertedBuffer, error: &error) { _, outStatus in
                 outStatus.pointee = .haveData
                 return buffer
             }
 
             // Apply gain and compute RMS
-            if let channelData = floatBuffer.floatChannelData {
-                let count = Int(floatBuffer.frameLength)
+            if let channelData = convertedBuffer.floatChannelData {
+                let count = Int(convertedBuffer.frameLength)
                 var sum: Float = 0
                 for i in 0..<count {
                     if gain > 1.0 { channelData[0][i] *= gain }
@@ -152,20 +153,9 @@ class AudioRecorder {
                 self.currentLevel = min(sqrt(sum / Float(count)) * 3.0, 1.0)
             }
 
-            // Convert to 16-bit PCM for smaller WAV
-            guard
-                let int16Buffer = AVAudioPCMBuffer(
-                    pcmFormat: recordFormat, frameCapacity: frameCount)
-            else { return }
-
-            toInt16.convert(to: int16Buffer, error: &error) { _, outStatus in
-                outStatus.pointee = .haveData
-                return floatBuffer
-            }
-
-            // Write to file on background queue
+            // AVAudioFile handles float32→int16 conversion on write (via processingFormat→fileFormat)
             self.writeQueue.async { [weak self] in
-                try? self?.audioFile?.write(from: int16Buffer)
+                try? self?.audioFile?.write(from: convertedBuffer)
             }
         }
 
@@ -179,8 +169,7 @@ class AudioRecorder {
         }
     }
 
-    /// Stop recording. For short recordings, returns the WAV directly (Groq processes WAV faster).
-    /// For longer recordings, compresses to FLAC using macOS-native afconvert (zero dependencies).
+    /// Stop recording. Short recordings sent as WAV; long ones compressed via macOS-native afconvert.
     func stop(completion: @escaping (URL) -> Void) {
         levelTimer?.invalidate()
         levelTimer = nil
@@ -188,34 +177,26 @@ class AudioRecorder {
         audioEngine.inputNode.removeTap(onBus: 0)
         audioEngine.stop()
 
-        // Ensure pending writes finish before reading the file
+        // Ensure pending writes complete before reading the file
         writeQueue.sync {
             self.audioFile = nil
         }
 
-        // Check file size to decide if FLAC conversion is worth it
         let fileSize =
             (try? FileManager.default.attributesOfItem(atPath: wavURL.path)[.size] as? Int) ?? 0
 
         if fileSize < Self.flacThresholdBytes {
-            // Short recording — WAV is fine, skip conversion overhead
             DispatchQueue.main.async { completion(self.wavURL) }
             return
         }
 
-        // Longer recording — compress with macOS-native afconvert (ships with every Mac)
+        // Compress with macOS-native afconvert (ships with every Mac, zero dependencies)
         DispatchQueue.global(qos: .userInitiated).async { [wavURL, flacURL] in
             try? FileManager.default.removeItem(at: flacURL)
 
             let process = Process()
             process.executableURL = URL(fileURLWithPath: "/usr/bin/afconvert")
-            process.arguments = [
-                "-f", "flac",  // FLAC container
-                "-d", "flac",  // FLAC codec
-                "-c", "1",  // mono
-                wavURL.path,
-                flacURL.path,
-            ]
+            process.arguments = ["-f", "flac", "-d", "flac", "-c", "1", wavURL.path, flacURL.path]
             process.standardOutput = FileHandle.nullDevice
             process.standardError = FileHandle.nullDevice
 
@@ -231,7 +212,6 @@ class AudioRecorder {
                 }
             } catch {}
 
-            // Fallback to WAV
             DispatchQueue.main.async { completion(wavURL) }
         }
     }
