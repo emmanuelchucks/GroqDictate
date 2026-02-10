@@ -1,3 +1,4 @@
+import Accelerate
 import AVFoundation
 import Cocoa
 import CoreAudio
@@ -17,16 +18,15 @@ class AudioRecorder {
     private let flacURL = FileManager.default.temporaryDirectory.appendingPathComponent(
         "groqdictate.flac")
 
-    private var levelTimer: Timer?
-    private var levelCallback: ((Float) -> Void)?
-    private var currentLevel: Float = 0
+    /// Current audio level (written on audio thread, read on main for waveform display)
+    var currentLevel: Float = 0
 
     // Serial queue for file writes (keeps I/O off the real-time audio thread)
     private let writeQueue = DispatchQueue(label: "com.groqdictate.audiowrite")
 
     // Only compress to FLAC if WAV exceeds this size.
     // Groq docs: "For lower latency, convert your files to wav format"
-    private static let flacThresholdBytes = 5 * 1024 * 1024  // 5MB ≈ 2.5 min
+    private static let flacThresholdBytes = 10 * 1024 * 1024  // 10MB ≈ 5 min
 
     // MARK: - Device Enumeration
 
@@ -97,11 +97,14 @@ class AudioRecorder {
         return result
     }
 
+    /// Pre-allocate audio resources so first recording starts faster
+    func warmup() {
+        audioEngine.prepare()
+    }
+
     // MARK: - Recording
 
-    func start(levelHandler: @escaping (Float) -> Void) throws {
-        levelCallback = levelHandler
-
+    func start() throws {
         let inputNode = audioEngine.inputNode
         let hwFormat = inputNode.inputFormat(forBus: 0)
 
@@ -120,6 +123,7 @@ class AudioRecorder {
         ])
 
         let converter = AVAudioConverter(from: hwFormat, to: recordFormat)!
+        converter.sampleRateConverterQuality = .min  // speech doesn't need audiophile resampling
         let gain = inputGain
 
         inputNode.installTap(onBus: 0, bufferSize: 4096, format: hwFormat) {
@@ -147,38 +151,33 @@ class AudioRecorder {
                 return buffer
             }
 
-            // Apply gain and compute RMS
+            // Apply gain and compute RMS via Accelerate (NEON SIMD on ARM64)
             if let channelData = convertedBuffer.floatChannelData {
-                let count = Int(convertedBuffer.frameLength)
-                var sum: Float = 0
-                for i in 0..<count {
-                    if gain > 1.0 { channelData[0][i] *= gain }
-                    sum += channelData[0][i] * channelData[0][i]
+                let ptr = channelData[0]
+                let len = vDSP_Length(convertedBuffer.frameLength)
+                if gain > 1.0 {
+                    var g = gain
+                    vDSP_vsmul(ptr, 1, &g, ptr, 1, len)
                 }
-                self.currentLevel = min(sqrt(sum / Float(count)) * 3.0, 1.0)
+                var rms: Float = 0
+                vDSP_rmsqv(ptr, 1, &rms, len)
+                self.currentLevel = min(rms * 3.0, 1.0)
             }
 
             // AVAudioFile handles float32→int16 conversion on write (via processingFormat→fileFormat)
             self.writeQueue.async { [weak self] in
-                try? self?.audioFile?.write(from: convertedBuffer)
+                autoreleasepool {
+                    try? self?.audioFile?.write(from: convertedBuffer)
+                }
             }
         }
 
         audioEngine.prepare()
         try audioEngine.start()
-
-        levelTimer = Timer.scheduledTimer(withTimeInterval: 1.0 / 30.0, repeats: true) {
-            [weak self] _ in
-            guard let self = self else { return }
-            self.levelCallback?(self.currentLevel)
-        }
     }
 
     /// Stop recording. Short recordings sent as WAV; long ones compressed via macOS-native afconvert.
     func stop(completion: @escaping (URL) -> Void) {
-        levelTimer?.invalidate()
-        levelTimer = nil
-        levelCallback = nil
         audioEngine.inputNode.removeTap(onBus: 0)
         audioEngine.stop()
 

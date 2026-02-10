@@ -60,6 +60,35 @@ class WaveformView: NSView {
     private var processingProgress: CGFloat = 0
     private var processingForward = true
 
+    // Cached drawing objects (avoid allocation in draw loop)
+    private var cachedBgPath: CGPath?
+    private var cachedBounds: NSRect = .zero
+
+    private lazy var recordingLabel: NSAttributedString = {
+        NSAttributedString(string: "● Recording", attributes: [
+            .font: NSFont.systemFont(ofSize: 11, weight: .medium),
+            .foregroundColor: NSColor.systemRed,
+        ])
+    }()
+    private lazy var processingLabel: NSAttributedString = {
+        NSAttributedString(string: "⟳ Transcribing…", attributes: [
+            .font: NSFont.systemFont(ofSize: 11, weight: .medium),
+            .foregroundColor: NSColor.systemOrange,
+        ])
+    }()
+    private lazy var errorLabel: NSAttributedString = {
+        NSAttributedString(string: "⚠ Error", attributes: [
+            .font: NSFont.systemFont(ofSize: 11, weight: .medium),
+            .foregroundColor: NSColor.systemRed,
+        ])
+    }()
+    private lazy var escHint: NSAttributedString = {
+        NSAttributedString(string: "esc to cancel", attributes: [
+            .font: NSFont.systemFont(ofSize: 10),
+            .foregroundColor: NSColor(white: 0.5, alpha: 1),
+        ])
+    }()
+
     override init(frame: NSRect) {
         super.init(frame: frame)
         wantsLayer = true
@@ -69,7 +98,10 @@ class WaveformView: NSView {
 
     required init?(coder: NSCoder) { fatalError("Not supported") }
 
-    func setRecording() {
+    private weak var levelSource: AudioRecorder?
+
+    func setRecording(levelSource: AudioRecorder) {
+        self.levelSource = levelSource
         displayState = .recording
         barHeights = Array(repeating: 0, count: barCount)
         startAnimating()
@@ -95,18 +127,18 @@ class WaveformView: NSView {
         needsDisplay = true
     }
 
-    func pushLevel(_ level: CGFloat) {
-        guard case .recording = displayState else { return }
-        barHeights.removeFirst()
-        barHeights.append(level)
-    }
-
     func startAnimating() {
         stopAnimating()
         animTimer = Timer.scheduledTimer(withTimeInterval: 1.0 / 30.0, repeats: true) {
             [weak self] _ in
             guard let self = self else { return }
-            if case .processing = self.displayState {
+            switch self.displayState {
+            case .recording:
+                // Pull level directly from recorder (eliminates separate level timer)
+                let level = CGFloat(self.levelSource?.currentLevel ?? 0)
+                self.barHeights.removeFirst()
+                self.barHeights.append(level)
+            case .processing:
                 if self.processingForward {
                     self.processingProgress += 0.015
                     if self.processingProgress >= 1.0 {
@@ -120,6 +152,7 @@ class WaveformView: NSView {
                         self.processingForward = true
                     }
                 }
+            default: break
             }
             self.needsDisplay = true
         }
@@ -136,11 +169,14 @@ class WaveformView: NSView {
         let bounds = self.bounds
         ctx.clear(bounds)
 
-        // Background
+        // Background (cached path)
+        if bounds != cachedBounds {
+            cachedBgPath = CGPath(
+                roundedRect: bounds, cornerWidth: 16, cornerHeight: 16, transform: nil)
+            cachedBounds = bounds
+        }
         ctx.setFillColor(NSColor(white: 0.08, alpha: 0.94).cgColor)
-        let bgPath = CGPath(
-            roundedRect: bounds, cornerWidth: 16, cornerHeight: 16, transform: nil)
-        ctx.addPath(bgPath)
+        ctx.addPath(cachedBgPath!)
         ctx.fillPath()
 
         let waveArea = NSRect(
@@ -159,44 +195,22 @@ class WaveformView: NSView {
             drawError(message, in: waveArea, ctx: ctx)
         }
 
-        // Status label
-        let statusText: String
-        let statusColor: NSColor
+        // Status label (cached attributed strings)
         switch displayState {
-        case .idle:
-            statusText = ""
-            statusColor = .clear
+        case .idle: break
         case .recording:
-            statusText = "● Recording"
-            statusColor = .systemRed
+            recordingLabel.draw(at: NSPoint(x: 16, y: 8))
         case .processing:
-            statusText = "⟳ Transcribing…"
-            statusColor = .systemOrange
+            processingLabel.draw(at: NSPoint(x: 16, y: 8))
         case .error:
-            statusText = "⚠ Error"
-            statusColor = .systemRed
+            errorLabel.draw(at: NSPoint(x: 16, y: 8))
         }
 
-        if !statusText.isEmpty {
-            let attrs: [NSAttributedString.Key: Any] = [
-                .font: NSFont.systemFont(ofSize: 11, weight: .medium),
-                .foregroundColor: statusColor,
-            ]
-            NSAttributedString(string: statusText, attributes: attrs)
-                .draw(at: NSPoint(x: 16, y: 8))
-        }
-
-        // Esc hint
+        // Esc hint (cached)
         if case .error = displayState {
-            // no hint for errors
         } else {
-            let hintAttrs: [NSAttributedString.Key: Any] = [
-                .font: NSFont.systemFont(ofSize: 10),
-                .foregroundColor: NSColor(white: 0.5, alpha: 1),
-            ]
-            let hint = NSAttributedString(string: "esc to cancel", attributes: hintAttrs)
-            let hintSize = hint.size()
-            hint.draw(at: NSPoint(x: bounds.width - hintSize.width - 16, y: 8))
+            let hintSize = escHint.size()
+            escHint.draw(at: NSPoint(x: bounds.width - hintSize.width - 16, y: 8))
         }
     }
 

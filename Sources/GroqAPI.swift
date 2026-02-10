@@ -1,8 +1,23 @@
 import Foundation
 
 enum GroqAPI {
-    private static let session = URLSession(configuration: .ephemeral)
+    private static let session: URLSession = {
+        let config = URLSessionConfiguration.default
+        config.requestCachePolicy = .reloadIgnoringLocalCacheData
+        config.urlCache = nil
+        config.httpShouldUsePipelining = true
+        return URLSession(configuration: config)
+    }()
     private static let maxFileSize = 25 * 1024 * 1024  // 25MB Groq limit
+
+    /// Pre-warm TCP+TLS connection to Groq so first transcription skips handshake (~100-300ms)
+    static func warmConnection() {
+        guard let url = URL(string: "https://api.groq.com") else { return }
+        var req = URLRequest(url: url)
+        req.httpMethod = "HEAD"
+        req.timeoutInterval = 5
+        session.dataTask(with: req) { _, _, _ in }.resume()
+    }
 
     static func transcribe(
         fileURL: URL,
@@ -15,10 +30,10 @@ enum GroqAPI {
             return
         }
 
-        // Read audio file with error handling
+        // Memory-map large files to avoid full copy into heap
         let audioData: Data
         do {
-            audioData = try Data(contentsOf: fileURL)
+            audioData = try Data(contentsOf: fileURL, options: .mappedIfSafe)
         } catch {
             completion(.failure(APIError.fileReadFailed(error.localizedDescription)))
             return
@@ -45,6 +60,7 @@ enum GroqAPI {
         let mimeType = ext == "flac" ? "audio/flac" : "audio/wav"
 
         var body = Data()
+        body.reserveCapacity(audioData.count + 512)
 
         func field(_ name: String, _ value: String) {
             body.append("--\(boundary)\r\n")
@@ -55,6 +71,7 @@ enum GroqAPI {
         field("model", config.model)
         field("language", config.language)
         field("response_format", "text")
+        field("temperature", "0")
 
         body.append("--\(boundary)\r\n")
         body.append(

@@ -32,6 +32,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
 
         if Config.hasAPIKey {
             applyConfig()
+            GroqAPI.warmConnection()
             requestPermissionsIfNeeded()
         } else {
             showSetup(isOnboarding: true)
@@ -52,17 +53,16 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     private func requestPermissionsIfNeeded() {
         switch AVCaptureDevice.authorizationStatus(for: .audio) {
         case .authorized:
-            // Mic done — now accessibility
+            recorder.warmup()  // pre-allocate audio resources
             requestAccessibilityThenStart()
         case .notDetermined:
-            // Ask for mic first. After user responds, ask for accessibility.
-            AVCaptureDevice.requestAccess(for: .audio) { [weak self] _ in
+            AVCaptureDevice.requestAccess(for: .audio) { [weak self] granted in
                 DispatchQueue.main.asyncAfter(deadline: .now() + 0.6) {
+                    if granted { self?.recorder.warmup() }
                     self?.requestAccessibilityThenStart()
                 }
             }
         case .denied, .restricted:
-            // Mic denied — still need to set up hotkeys
             requestAccessibilityThenStart()
         @unknown default:
             requestAccessibilityThenStart()
@@ -336,11 +336,9 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         }
 
         do {
-            panel.waveformView.setRecording()
+            panel.waveformView.setRecording(levelSource: recorder)
             panel.show()
-            try recorder.start { [weak self] level in
-                self?.panel.waveformView.pushLevel(CGFloat(level))
-            }
+            try recorder.start()
             state = .recording
         } catch {
             recorder.cleanup()
@@ -391,7 +389,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
                         if let app = self.targetApp, !app.isTerminated {
                             app.activate()
                         }
-                        DispatchQueue.main.asyncAfter(deadline: .now() + 0.15) {
+                        DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) {
                             self.simulatePaste()
                         }
 

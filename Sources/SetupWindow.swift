@@ -62,7 +62,8 @@ class SetupWindow: NSWindow, NSWindowDelegate {
 
         modelPopup.frame = NSRect(x: 24, y: y, width: 412, height: 26)
         let models = [
-            ("whisper-large-v3-turbo", "Whisper Large V3 Turbo (fastest)"),
+            ("distil-whisper-large-v3-en", "Distil Whisper V3 (English, fastest)"),
+            ("whisper-large-v3-turbo", "Whisper Large V3 Turbo (fast)"),
             ("whisper-large-v3", "Whisper Large V3 (most accurate)"),
         ]
         let savedModel =
