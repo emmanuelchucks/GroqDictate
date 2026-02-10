@@ -28,7 +28,20 @@ class AppDelegate: NSObject, NSApplicationDelegate {
 
     /// Prevent ghost window when relaunched from Raycast/Spotlight
     func applicationShouldHandleReopen(_ sender: NSApplication, hasVisibleWindows flag: Bool) -> Bool {
+        if !flag {
+            // No visible windows — immediately hide to prevent ghost window
+            NSApp.hide(nil)
+        }
         return false
+    }
+
+    func applicationDidBecomeActive(_ notification: Notification) {
+        // If activated externally (Raycast/Spotlight) with no visible windows,
+        // immediately yield focus back to the previous app
+        let hasVisibleWindow = NSApp.windows.contains { $0.isVisible && !($0 is FloatingPanel) && $0 != setupWindow }
+        if !hasVisibleWindow && setupWindow == nil {
+            NSApp.hide(nil)
+        }
     }
 
     func applicationDidFinishLaunching(_ notification: Notification) {
