@@ -11,17 +11,18 @@ class FloatingPanel: NSPanel {
             contentRect: NSRect(x: 0, y: 0, width: 320, height: 100),
             styleMask: [.nonactivatingPanel, .hudWindow, .fullSizeContentView],
             backing: .buffered,
-            defer: false
+            defer: true
         )
         level = .floating
         isOpaque = false
         backgroundColor = .clear
         hasShadow = true
-        collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary]
+        collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary, .transient, .ignoresCycle]
         isMovableByWindowBackground = true
         hidesOnDeactivate = false
         titleVisibility = .hidden
         titlebarAppearsTransparent = true
+        isExcludedFromWindowsMenu = true
         contentView = waveformView
     }
 
@@ -31,6 +32,7 @@ class FloatingPanel: NSPanel {
         let x = screenFrame.midX - frame.width / 2
         let y = screenFrame.maxY - 140
         setFrameOrigin(NSPoint(x: x, y: y))
+        alphaValue = 1
         orderFront(nil)
     }
 
@@ -38,6 +40,18 @@ class FloatingPanel: NSPanel {
         waveformView.stopAnimating()
         waveformView.setIdle()
         orderOut(nil)
+        // Close the window to fully remove it from the window server.
+        // This prevents the ghost flash when macOS re-activates the app
+        // (e.g. Raycast "open" on already-running app sends kAEReopenApplication,
+        // which activates/unhides the app — any window still in the window server
+        // can briefly flash on screen).
+        close()
+    }
+
+    /// Override to prevent deallocation on close so the panel can be reused.
+    override var isReleasedWhenClosed: Bool {
+        get { false }
+        set { /* ignore — always false */ }
     }
 }
 
