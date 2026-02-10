@@ -45,6 +45,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     func applicationDidFinishLaunching(_ notification: Notification) {
+        NSApp.hide(nil)  // prevent ghost window on first Raycast/Spotlight activation
         buildAppMenu()
         buildMenuBar()
 
