@@ -9,19 +9,20 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     enum DictationState {
         case idle
         case recording
-        case processing  // compression + transcription
+        case processing
     }
 
     private var state: DictationState = .idle
     private let panel = FloatingPanel()
     private let recorder = AudioRecorder()
     private var statusItem: NSStatusItem!
-    private var globalMonitor: Any?
-    private var localMonitor: Any?
+    private var eventTap: CFMachPort?
+    private var runLoopSource: CFRunLoopSource?
     private var setupWindow: SetupWindow?
     private var rightCommandDown = false
     private var targetApp: NSRunningApplication?
-    private var currentTask: URLSessionDataTask?
+    // No need to track the URLSessionDataTask — state guards prevent stale results from being used
+    private var dismissWorkItem: DispatchWorkItem?
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         buildAppMenu()
@@ -30,7 +31,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         if Config.hasAPIKey {
             requestPermissionsIfNeeded()
             applyConfig()
-            registerHotkey()
+            installEventTap()
         } else {
             showSetup(isOnboarding: true)
         }
@@ -152,7 +153,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         window.onComplete = { [weak self] in
             self?.setupWindow = nil
             self?.applyConfig()
-            self?.registerHotkey()
+            self?.installEventTap()
             if isOnboarding {
                 self?.requestPermissionsIfNeeded()
             }
@@ -162,26 +163,106 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         setupWindow = window
     }
 
-    // MARK: - Hotkey (Right ⌘ to toggle, Esc to cancel)
+    // MARK: - Event Tap (captures and consumes hotkeys)
 
-    private func registerHotkey() {
-        if let m = globalMonitor { NSEvent.removeMonitor(m); globalMonitor = nil }
-        if let m = localMonitor { NSEvent.removeMonitor(m); localMonitor = nil }
-
-        globalMonitor = NSEvent.addGlobalMonitorForEvents(matching: [.flagsChanged, .keyDown]) {
-            [weak self] event in
-            self?.handleEvent(event)
+    /// CGEventTap lets us intercept AND consume events (unlike NSEvent global monitors).
+    /// This prevents Esc from leaking to the focused app during recording.
+    private func installEventTap() {
+        // Remove existing tap if any
+        if let tap = eventTap {
+            CGEvent.tapEnable(tap: tap, enable: false)
+            if let source = runLoopSource {
+                CFRunLoopRemoveSource(CFRunLoopGetMain(), source, .commonModes)
+            }
+            eventTap = nil
+            runLoopSource = nil
         }
 
-        localMonitor = NSEvent.addLocalMonitorForEvents(matching: [.flagsChanged, .keyDown]) {
+        let mask: CGEventMask =
+            (1 << CGEventType.flagsChanged.rawValue) | (1 << CGEventType.keyDown.rawValue)
+
+        // Store self as userInfo pointer for the C callback
+        let userInfo = Unmanaged.passUnretained(self).toOpaque()
+
+        guard
+            let tap = CGEvent.tapCreate(
+                tap: .cgSessionEventTap,
+                place: .headInsertEventTap,
+                options: .defaultTap,  // .defaultTap = can modify/consume events
+                eventsOfInterest: mask,
+                callback: { _, type, event, userInfo -> Unmanaged<CGEvent>? in
+                    guard let userInfo = userInfo else {
+                        return Unmanaged.passUnretained(event)
+                    }
+                    let delegate = Unmanaged<AppDelegate>.fromOpaque(userInfo)
+                        .takeUnretainedValue()
+                    return delegate.handleCGEvent(type: type, event: event)
+                },
+                userInfo: userInfo
+            )
+        else {
+            // Accessibility not granted yet — fall back to NSEvent monitors
+            installNSEventMonitors()
+            return
+        }
+
+        eventTap = tap
+        runLoopSource = CFMachPortCreateRunLoopSource(kCFAllocatorDefault, tap, 0)
+        CFRunLoopAddSource(CFRunLoopGetMain(), runLoopSource, .commonModes)
+        CGEvent.tapEnable(tap: tap, enable: true)
+    }
+
+    /// Fallback for when Accessibility isn't granted (can't consume events).
+    private func installNSEventMonitors() {
+        NSEvent.addGlobalMonitorForEvents(matching: [.flagsChanged, .keyDown]) {
             [weak self] event in
-            self?.handleEvent(event)
+            self?.handleNSEvent(event)
+        }
+        NSEvent.addLocalMonitorForEvents(matching: [.flagsChanged, .keyDown]) {
+            [weak self] event in
+            self?.handleNSEvent(event)
             return event
         }
     }
 
-    private func handleEvent(_ event: NSEvent) {
-        // Esc cancels recording or processing
+    /// CGEventTap callback — returns nil to consume the event, or the event to pass through.
+    private func handleCGEvent(type: CGEventType, event: CGEvent) -> Unmanaged<CGEvent>? {
+        // Handle tap being disabled by the system (e.g. timeout)
+        if type == .tapDisabledByTimeout || type == .tapDisabledByUserInput {
+            if let tap = eventTap {
+                CGEvent.tapEnable(tap: tap, enable: true)
+            }
+            return Unmanaged.passUnretained(event)
+        }
+
+        let keyCode = event.getIntegerValueField(.keyboardEventKeycode)
+
+        // Esc key (53) — consume when recording/processing to prevent leak
+        if type == .keyDown && keyCode == 53 {
+            if state == .recording || state == .processing {
+                DispatchQueue.main.async { [weak self] in self?.cancel() }
+                return nil  // consumed — Esc doesn't reach the focused app
+            }
+            return Unmanaged.passUnretained(event)  // pass through when idle
+        }
+
+        // Right ⌘ (keyCode 54)
+        if type == .flagsChanged && keyCode == 54 {
+            let flags = event.flags
+            let cmdDown = flags.contains(.maskCommand)
+            if cmdDown && !rightCommandDown {
+                rightCommandDown = true
+                DispatchQueue.main.async { [weak self] in self?.toggle() }
+            } else if !cmdDown && rightCommandDown {
+                rightCommandDown = false
+            }
+        }
+
+        return Unmanaged.passUnretained(event)  // pass through
+    }
+
+    /// NSEvent fallback handler (can't consume events).
+    private func handleNSEvent(_ event: NSEvent) {
         if event.type == .keyDown && event.keyCode == 53 {
             if state == .recording || state == .processing {
                 DispatchQueue.main.async { [weak self] in self?.cancel() }
@@ -206,12 +287,16 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         switch state {
         case .idle: startRecording()
         case .recording: stopAndTranscribe()
-        case .processing: break  // wait for completion
+        case .processing: break
         }
     }
 
     private func startRecording() {
         guard state == .idle else { return }
+
+        // Cancel any pending error dismiss timer
+        dismissWorkItem?.cancel()
+        dismissWorkItem = nil
 
         targetApp = NSWorkspace.shared.frontmostApplication
 
@@ -227,18 +312,16 @@ class AppDelegate: NSObject, NSApplicationDelegate {
             }
             state = .recording
         } catch {
-            panel.waveformView.showError("Mic error")
-            panel.show()
-            autoDismissPanel()
+            showError("Mic error")
         }
     }
 
     private func cancel() {
-        currentTask?.cancel()
-        currentTask = nil
+        dismissWorkItem?.cancel()
+        dismissWorkItem = nil
 
         if state == .recording {
-            recorder.stop { _ in }  // discard result
+            recorder.stop { _ in }
         }
         recorder.cleanup()
         state = .idle
@@ -248,16 +331,13 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     private func stopAndTranscribe() {
         guard state == .recording else { return }
         guard let config = Config.load() else {
-            panel.waveformView.showError("No API key")
-            autoDismissPanel()
-            state = .idle
+            showError("No API key")
             return
         }
 
         state = .processing
         panel.waveformView.setProcessing()
 
-        // Async: stop recording → compress → upload → paste
         recorder.stop { [weak self] fileURL in
             guard let self = self, self.state == .processing else { return }
 
@@ -265,7 +345,9 @@ class AppDelegate: NSObject, NSApplicationDelegate {
                 DispatchQueue.main.async {
                     guard let self = self else { return }
                     self.recorder.cleanup()
-                    self.currentTask = nil
+
+                    // Ignore result if user already cancelled
+                    guard self.state == .processing else { return }
 
                     switch result {
                     case .success(let text):
@@ -275,7 +357,6 @@ class AppDelegate: NSObject, NSApplicationDelegate {
                         self.panel.dismiss()
                         self.state = .idle
 
-                        // Reactivate the target app, then paste
                         if let app = self.targetApp, !app.isTerminated {
                             app.activate()
                         }
@@ -284,23 +365,28 @@ class AppDelegate: NSObject, NSApplicationDelegate {
                         }
 
                     case .failure(let error):
-                        let msg = String(error.localizedDescription.prefix(50))
-                        self.panel.waveformView.showError(msg)
-                        self.autoDismissPanel()
-                        self.state = .idle
+                        self.showError(
+                            String(error.localizedDescription.prefix(50)))
                     }
                 }
             }
         }
     }
 
-    private func autoDismissPanel() {
-        DispatchQueue.main.asyncAfter(deadline: .now() + 3) { [weak self] in
+    private func showError(_ message: String) {
+        state = .idle
+        panel.waveformView.showError(message)
+        panel.show()
+
+        // Auto-dismiss after 3s, but cancellable if user starts a new recording
+        let work = DispatchWorkItem { [weak self] in
             self?.panel.dismiss()
         }
+        dismissWorkItem = work
+        DispatchQueue.main.asyncAfter(deadline: .now() + 3, execute: work)
     }
 
-    /// Simulate Cmd+V. Requires Accessibility permission; silently no-ops if not granted.
+    /// Simulate Cmd+V. Requires Accessibility; silently no-ops if not granted.
     private func simulatePaste() {
         let source = CGEventSource(stateID: .combinedSessionState)
         source?.setLocalEventsFilterDuringSuppressionState(
