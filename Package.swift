@@ -15,8 +15,6 @@ let package = Package(
                 .unsafeFlags(["-Xlinker", "-dead_strip"]),
                 .linkedFramework("Cocoa"),
                 .linkedFramework("AVFoundation"),
-                .linkedFramework("Accelerate"),
-                .linkedFramework("Carbon"),
                 .linkedFramework("Security"),
             ]
         )

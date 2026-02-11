@@ -1,31 +1,44 @@
-#!/bin/bash
-# Nuke all GroqDictate state for a clean-slate fresh install experience.
-set -e
+#!/usr/bin/env bash
+set -euo pipefail
 
-echo "Killing GroqDictate..."
-pkill -f GroqDictate 2>/dev/null || true
-sleep 0.5
+BUNDLE_ID="${BUNDLE_ID:-com.groqdictate}"
+KEYCHAIN_SERVICE="${KEYCHAIN_SERVICE:-com.groqdictate}"
+KEYCHAIN_ACCOUNT="${KEYCHAIN_ACCOUNT:-groq-api-key}"
+TMP_BASE="${TMPDIR:-/tmp}"
 
-echo "Deleting Keychain entry (service: com.groqdictate, account: groq-api-key)..."
-security delete-generic-password -s "com.groqdictate" -a "groq-api-key" 2>/dev/null || true
+log() {
+  printf '%s\n' "$*"
+}
 
-echo "Deleting UserDefaults (groq-model, mic-uid, input-gain)..."
-defaults delete com.groqdictate 2>/dev/null || true
+log "→ Stopping GroqDictate"
+pkill -x "GroqDictate" 2>/dev/null || true
+sleep 0.3
 
-echo "Deleting caches and HTTP storage..."
-rm -rf ~/Library/Caches/com.groqdictate
-rm -rf ~/Library/Caches/groq-dictate
-rm -rf ~/Library/HTTPStorages/com.groqdictate
-rm -rf ~/Library/HTTPStorages/groq-dictate
+log "→ Removing API key from Keychain"
+security delete-generic-password -s "$KEYCHAIN_SERVICE" -a "$KEYCHAIN_ACCOUNT" 2>/dev/null || true
 
-echo "Deleting temp audio files..."
-rm -f "${TMPDIR}groqdictate.wav" "${TMPDIR}groqdictate.flac"
+log "→ Removing UserDefaults domain: $BUNDLE_ID"
+defaults delete "$BUNDLE_ID" 2>/dev/null || true
 
-echo "Resetting Microphone permission..."
-tccutil reset Microphone com.groqdictate 2>/dev/null || true
+log "→ Removing cache and HTTP storage"
+paths=(
+  "$HOME/Library/Caches/$BUNDLE_ID"
+  "$HOME/Library/Caches/groq-dictate"
+  "$HOME/Library/HTTPStorages/$BUNDLE_ID"
+  "$HOME/Library/HTTPStorages/groq-dictate"
+)
 
-echo "Resetting Accessibility permission..."
-tccutil reset Accessibility com.groqdictate 2>/dev/null || true
+for path in "${paths[@]}"; do
+  rm -rf "$path"
+done
 
-echo ""
-echo "✅ Clean slate. Run: open /Applications/GroqDictate.app"
+log "→ Removing temporary audio files"
+rm -f "$TMP_BASE/groqdictate.wav" "$TMP_BASE/groqdictate.flac"
+
+log "→ Resetting TCC permissions"
+tccutil reset Microphone "$BUNDLE_ID" 2>/dev/null || true
+tccutil reset Accessibility "$BUNDLE_ID" 2>/dev/null || true
+tccutil reset ListenEvent "$BUNDLE_ID" 2>/dev/null || true
+
+log "✅ Clean slate complete"
+log "Run: open /Applications/GroqDictate.app"
