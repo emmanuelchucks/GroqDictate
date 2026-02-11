@@ -262,7 +262,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             return
         }
 
-        AppLog.notice("accessibility not trusted, prompting user", category: .app, force: true)
+        AppLog.event("accessibility not trusted, prompting user", category: .app)
 
         let options = [kAXTrustedCheckOptionPrompt.takeUnretainedValue(): true] as CFDictionary
         _ = AXIsProcessTrustedWithOptions(options)
@@ -313,7 +313,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private func startRecording() {
         let micStatus = AVCaptureDevice.authorizationStatus(for: .audio)
         if micStatus == .denied || micStatus == .restricted {
-            AppLog.notice("recording blocked: microphone permission denied", category: .audio, force: true)
+            AppLog.event("recording blocked: microphone permission denied", category: .audio)
             showError(kind: .micDenied, message: AppStrings.Errors.micDenied, action: .settings)
             return
         }
@@ -372,7 +372,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                     self.lastAudioFileURL = nil
                     self.pasteText(text)
                 case .failure(let error):
-                    AppLog.notice("transcription failed: \(error.errorDescription ?? "unknown")", category: .network, force: true)
+                    AppLog.debug("transcription failed: \(error.errorDescription ?? "unknown")", category: .network)
                     self.showTranscriptionError(error)
                 }
             }
@@ -381,14 +381,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     private func retryTranscription() {
         guard let fileURL = lastAudioFileURL, FileManager.default.fileExists(atPath: fileURL.path) else {
-            AppLog.notice("retry requested but no last audio file; starting new recording", category: .network, force: true)
+            AppLog.debug("retry requested but no last audio file; starting new recording", category: .network)
             transition(to: .idle, reason: "retry fallback to new recording")
             panel.dismiss()
             startRecording()
             return
         }
 
-        AppLog.notice("retrying transcription for \(fileURL.lastPathComponent)", category: .network, force: true)
+        AppLog.debug("retrying transcription for \(fileURL.lastPathComponent)", category: .network)
 
         guard let config = Config.load() else {
             showError(kind: .invalidKey, message: AppStrings.Errors.invalidKey, action: .settings)
@@ -401,7 +401,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     private func cancel() {
-        AppLog.notice("cancel requested in state=\(describe(state))", category: .app, force: true)
+        AppLog.debug("cancel requested in state=\(describe(state))", category: .app)
         if case .recording = state {
             recorder.stop(processRecording: false) { _ in }
         }
@@ -439,7 +439,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     private func showError(kind: ErrorKind, message: String, action: WaveformView.ErrorAction) {
-        AppLog.notice("showing error kind=\(describe(kind)) message=\(message)", category: .ui, force: true)
+        AppLog.debug("showing error kind=\(describe(kind)) message=\(message)", category: .ui)
         transition(to: .error(kind), reason: "error shown")
         panel.waveformView.showError(message, action: action)
         panel.show()

@@ -3,7 +3,7 @@ import Cocoa
 final class SetupWindow: NSWindow, NSWindowDelegate {
     private static let systemDefaultMicToken = "__system_default__"
 
-    private let apiKeyField = NSTextField()
+    private let apiKeyField = NSSecureTextField()
     private let micPopup = NSPopUpButton()
     private let modelPopup = NSPopUpButton()
     private let gainSlider = NSSlider()

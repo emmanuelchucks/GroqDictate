@@ -236,7 +236,7 @@ enum GroqAPI {
             requestID,
             note
         )
-        AppLog.notice(message, category: .network, force: true)
+        AppLog.debug(message, category: .network)
     }
 
     private static func mapHTTPError(status: Int, headers: HTTPURLResponse, body: Data) -> TranscriptionError {

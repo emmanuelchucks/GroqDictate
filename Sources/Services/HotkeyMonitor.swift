@@ -41,7 +41,7 @@ final class HotkeyMonitor {
             },
             userInfo: selfPtr
         ) else {
-            AppLog.notice("event tap unavailable, using NSEvent fallback", category: .hotkey, force: true)
+            AppLog.event("event tap unavailable, using NSEvent fallback", category: .hotkey)
             installNSEventFallback()
             return
         }
@@ -91,7 +91,7 @@ final class HotkeyMonitor {
 
     private func handleCGEvent(type: CGEventType, event: CGEvent) -> Unmanaged<CGEvent>? {
         if type == .tapDisabledByTimeout || type == .tapDisabledByUserInput {
-            AppLog.notice("event tap disabled by system, re-enabling", category: .hotkey, force: true)
+            AppLog.event("event tap disabled by system, re-enabling", category: .hotkey)
             if let eventTap {
                 CGEvent.tapEnable(tap: eventTap, enable: true)
             }

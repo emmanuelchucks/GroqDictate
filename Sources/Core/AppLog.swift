@@ -18,8 +18,7 @@ enum AppLog {
         NSLog("\(prefix)[\(category.rawValue)]: \(message())")
     }
 
-    static func notice(_ message: @autoclosure () -> String, category: Category = .app, force: Bool = false) {
-        guard force || AppConstants.Diagnostics.debugLoggingEnabled else { return }
+    static func event(_ message: @autoclosure () -> String, category: Category = .app) {
         NSLog("\(prefix)[\(category.rawValue)]: \(message())")
     }
 
