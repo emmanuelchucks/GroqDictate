@@ -78,6 +78,19 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private func wireHotkeys() {
         hotkeys.onRightCommandPress = { [weak self] in self?.toggle() }
         hotkeys.onEscapePress = { [weak self] in self?.handleEscape() }
+        hotkeys.shouldConsumeEscape = { [weak self] in
+            guard let self else { return false }
+            return isEscapeActiveState(self.state)
+        }
+    }
+
+    private func isEscapeActiveState(_ state: DictationState) -> Bool {
+        switch state {
+        case .recording, .processing, .error:
+            return true
+        case .idle:
+            return false
+        }
     }
 
     private func applyConfig() {

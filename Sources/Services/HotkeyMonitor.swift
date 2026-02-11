@@ -3,6 +3,7 @@ import Cocoa
 final class HotkeyMonitor {
     var onRightCommandPress: (() -> Void)?
     var onEscapePress: (() -> Void)?
+    var shouldConsumeEscape: (() -> Bool)?
 
     private var eventTap: CFMachPort?
     private var runLoopSource: CFRunLoopSource?
@@ -93,6 +94,11 @@ final class HotkeyMonitor {
         let keyCode = event.getIntegerValueField(.keyboardEventKeycode)
 
         if type == .keyDown && keyCode == 53 {
+            let shouldConsume = shouldConsumeEscape?() ?? false
+            guard shouldConsume else {
+                return Unmanaged.passUnretained(event)
+            }
+
             DispatchQueue.main.async { [weak self] in self?.onEscapePress?() }
             return nil
         }
@@ -115,6 +121,8 @@ final class HotkeyMonitor {
 
     private func handleNSEvent(_ event: NSEvent) {
         if event.type == .keyDown && event.keyCode == 53 {
+            let shouldConsume = shouldConsumeEscape?() ?? false
+            guard shouldConsume else { return }
             DispatchQueue.main.async { [weak self] in self?.onEscapePress?() }
             return
         }
