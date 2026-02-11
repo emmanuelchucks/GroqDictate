@@ -189,7 +189,8 @@ No raw JSON or backend payload text is shown verbatim.
 - Input gain applied in callback path.
 - Optional specific mic selection supported.
 - Temp file location: `$TMPDIR`.
-- Large recordings are compressed to FLAC before upload.
+- On stop: finalize WAV, trim leading/trailing silence, then apply FLAC compression threshold.
+- Interior pauses are preserved.
 - Cleanup policy:
   - success: cleanup
   - cancel: cleanup

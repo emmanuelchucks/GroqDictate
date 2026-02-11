@@ -367,7 +367,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     private func cancel() {
         if case .recording = state {
-            recorder.stop { _ in }
+            recorder.stop(processRecording: false) { _ in }
         }
         recorder.cleanup()
         lastAudioFileURL = nil

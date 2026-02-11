@@ -35,6 +35,13 @@ final class AudioRecorder {
     private static let bufferSize: UInt32 = 4096
     private static let bufferCount = 3
 
+    private static let trimWindowMs: Float64 = 20
+    private static let trimSpeechRMSThreshold: Float = 0.009
+    private static let trimMinSpeechWindows = 4
+    private static let trimEdgePaddingMs: Float64 = 120
+    private static let trimMinEdgeTrimMs: Float64 = 180
+    private static let trimMinResultMs: Float64 = 300
+
     func start() throws {
         try? FileManager.default.removeItem(at: wavURL)
         FileManager.default.createFile(atPath: wavURL.path, contents: nil)
@@ -58,7 +65,7 @@ final class AudioRecorder {
         isRecording = true
     }
 
-    func stop(completion: @escaping (URL) -> Void) {
+    func stop(processRecording: Bool = true, completion: @escaping (URL) -> Void) {
         isRecording = false
 
         if let queue = audioQueue {
@@ -72,13 +79,12 @@ final class AudioRecorder {
         try? fileHandle?.close()
         fileHandle = nil
 
-        let fileSize = (try? FileManager.default.attributesOfItem(atPath: wavURL.path)[.size] as? Int) ?? 0
-        guard fileSize >= Self.flacThreshold else {
+        guard processRecording else {
             DispatchQueue.main.async { completion(self.wavURL) }
             return
         }
 
-        compressToFLAC(completion: completion)
+        postProcessRecording(completion: completion)
     }
 
     func cleanup() {
@@ -112,6 +118,123 @@ final class AudioRecorder {
         if let queue = audioQueue {
             AudioQueueEnqueueBuffer(queue, buffer, 0, nil)
         }
+    }
+
+    private func postProcessRecording(completion: @escaping (URL) -> Void) {
+        DispatchQueue.global(qos: .userInitiated).async {
+            self.trimWAVSilenceEdgesIfNeeded()
+
+            let fileSize = (try? FileManager.default.attributesOfItem(atPath: self.wavURL.path)[.size] as? Int) ?? 0
+            guard fileSize >= Self.flacThreshold else {
+                DispatchQueue.main.async { completion(self.wavURL) }
+                return
+            }
+
+            self.compressToFLAC(completion: completion)
+        }
+    }
+
+    private func trimWAVSilenceEdgesIfNeeded() {
+        guard let data = try? Data(contentsOf: wavURL, options: .mappedIfSafe), data.count > 44 else { return }
+
+        let sampleByteCount = data.count - 44
+        guard sampleByteCount >= 2 else { return }
+
+        let sampleCount = sampleByteCount / 2
+        var samples = [Int16](repeating: 0, count: sampleCount)
+        _ = samples.withUnsafeMutableBytes { destination in
+            data.copyBytes(to: destination, from: 44..<(44 + sampleCount * 2))
+        }
+
+        guard var (startSample, endSample) = Self.detectSpeechBounds(samples: samples) else { return }
+
+        let paddingSamples = Int(Self.sampleRate * Self.trimEdgePaddingMs / 1000)
+        startSample = max(0, startSample - paddingSamples)
+        endSample = min(sampleCount, endSample + paddingSamples)
+
+        let minEdgeTrimSamples = Int(Self.sampleRate * Self.trimMinEdgeTrimMs / 1000)
+        if startSample < minEdgeTrimSamples { startSample = 0 }
+        if (sampleCount - endSample) < minEdgeTrimSamples { endSample = sampleCount }
+
+        guard startSample < endSample else { return }
+        guard !(startSample == 0 && endSample == sampleCount) else { return }
+
+        let minResultSamples = Int(Self.sampleRate * Self.trimMinResultMs / 1000)
+        guard (endSample - startSample) >= minResultSamples else { return }
+
+        let trimmedSamples = Array(samples[startSample..<endSample])
+        let trimmedPCM = trimmedSamples.withUnsafeBytes { Data($0) }
+
+        var trimmedWAV = Data(capacity: 44 + trimmedPCM.count)
+        trimmedWAV.append(Self.wavHeader(dataSize: UInt32(trimmedPCM.count)))
+        trimmedWAV.append(trimmedPCM)
+
+        do {
+            try trimmedWAV.write(to: wavURL, options: .atomic)
+            bytesWritten = UInt32(trimmedPCM.count)
+        } catch {
+            NSLog("GroqDictate: failed to trim silence (\(error.localizedDescription))")
+        }
+    }
+
+    private static func detectSpeechBounds(samples: [Int16]) -> (startSample: Int, endSample: Int)? {
+        let windowSize = max(1, Int(sampleRate * trimWindowMs / 1000))
+        let totalWindows = Int(ceil(Double(samples.count) / Double(windowSize)))
+        guard totalWindows > 0 else { return nil }
+
+        var speechWindows = [Bool](repeating: false, count: totalWindows)
+        for index in 0..<totalWindows {
+            let start = index * windowSize
+            let end = min(samples.count, start + windowSize)
+            guard start < end else { continue }
+
+            var sumSquares: Double = 0
+            for sample in samples[start..<end] {
+                let normalized = Double(sample) / 32768.0
+                sumSquares += normalized * normalized
+            }
+
+            let rms = sqrt(sumSquares / Double(end - start))
+            speechWindows[index] = rms >= Double(trimSpeechRMSThreshold)
+        }
+
+        let required = max(1, min(trimMinSpeechWindows, speechWindows.count))
+
+        var firstSpeechWindow: Int?
+        var streak = 0
+        for index in 0..<speechWindows.count {
+            if speechWindows[index] {
+                streak += 1
+                if streak >= required {
+                    firstSpeechWindow = index - streak + 1
+                    break
+                }
+            } else {
+                streak = 0
+            }
+        }
+
+        guard let firstSpeechWindow else { return nil }
+
+        var lastSpeechWindow: Int?
+        streak = 0
+        for index in stride(from: speechWindows.count - 1, through: 0, by: -1) {
+            if speechWindows[index] {
+                streak += 1
+                if streak >= required {
+                    lastSpeechWindow = index + required - 1
+                    break
+                }
+            } else {
+                streak = 0
+            }
+        }
+
+        guard let lastSpeechWindow, firstSpeechWindow <= lastSpeechWindow else { return nil }
+
+        let startSample = firstSpeechWindow * windowSize
+        let endSample = min(samples.count, (lastSpeechWindow + 1) * windowSize)
+        return (startSample, endSample)
     }
 
     private func setLevel(_ value: Float) {
