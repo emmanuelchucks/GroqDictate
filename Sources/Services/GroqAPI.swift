@@ -3,13 +3,17 @@ import Foundation
 enum GroqAPI {
     private static let baseURL = AppConstants.URLs.groqTranscriptions
     private static let maxFileSize = 25 * 1024 * 1024
+    private static let requestTimeout: TimeInterval = 12
+    private static let resourceTimeout: TimeInterval = 30
+    private static let latencyLogThresholdMs: Double = 2500
 
     private static let session: URLSession = {
         let config = URLSessionConfiguration.default
         config.requestCachePolicy = .reloadIgnoringLocalCacheData
         config.urlCache = nil
-        config.timeoutIntervalForRequest = 30
-        config.timeoutIntervalForResource = 60
+        config.timeoutIntervalForRequest = requestTimeout
+        config.timeoutIntervalForResource = resourceTimeout
+        config.waitsForConnectivity = true
         return URLSession(configuration: config)
     }()
 
@@ -25,6 +29,8 @@ enum GroqAPI {
         config: Config,
         completion: @escaping (Result<String, TranscriptionError>) -> Void
     ) {
+        let startedAt = CFAbsoluteTimeGetCurrent()
+
         let audioData: Data
         do {
             audioData = try Data(contentsOf: fileURL, options: .mappedIfSafe)
@@ -33,18 +39,31 @@ enum GroqAPI {
             return
         }
 
+        let readMs = elapsedMs(since: startedAt)
+
         guard audioData.count <= maxFileSize else {
             completion(.failure(.tooLarge))
             return
         }
 
+        let requestBuildStartedAt = CFAbsoluteTimeGetCurrent()
         let request = buildRequest(audioData: audioData, fileURL: fileURL, config: config)
-        send(request, attempt: 1, completion: completion)
+        let buildMs = elapsedMs(since: requestBuildStartedAt)
+
+        send(
+            request,
+            attempt: 1,
+            startedAt: startedAt,
+            readMs: readMs,
+            buildMs: buildMs,
+            completion: completion
+        )
     }
 
     private static func buildRequest(audioData: Data, fileURL: URL, config: Config) -> URLRequest {
         var request = URLRequest(url: baseURL)
         request.httpMethod = "POST"
+        request.timeoutInterval = requestTimeout
         request.setValue("Bearer \(config.apiKey)", forHTTPHeaderField: "Authorization")
 
         let boundary = "Boundary-\(UUID().uuidString)"
@@ -79,12 +98,19 @@ enum GroqAPI {
     private static func send(
         _ request: URLRequest,
         attempt: Int,
+        startedAt: CFAbsoluteTime,
+        readMs: Double,
+        buildMs: Double,
         completion: @escaping (Result<String, TranscriptionError>) -> Void
     ) {
         let activeSession = attempt == 1 ? session : URLSession(configuration: .ephemeral)
 
         activeSession.dataTask(with: request) { data, response, error in
             if attempt > 1 { activeSession.invalidateAndCancel() }
+
+            let totalMs = elapsedMs(since: startedAt)
+            let http = response as? HTTPURLResponse
+            let requestID = http?.value(forHTTPHeaderField: "x-request-id") ?? "n/a"
 
             if let error {
                 let nsError = error as NSError
@@ -94,10 +120,27 @@ enum GroqAPI {
 
                 if attempt == 1 && isRetryableTransport {
                     session.reset {
-                        send(request, attempt: 2, completion: completion)
+                        send(
+                            request,
+                            attempt: 2,
+                            startedAt: startedAt,
+                            readMs: readMs,
+                            buildMs: buildMs,
+                            completion: completion
+                        )
                     }
                     return
                 }
+
+                logLatency(
+                    totalMs: totalMs,
+                    readMs: readMs,
+                    buildMs: buildMs,
+                    attempt: attempt,
+                    statusCode: nil,
+                    requestID: requestID,
+                    note: "error=\(nsError.code)"
+                )
 
                 if nsError.code == NSURLErrorTimedOut {
                     completion(.failure(.timedOut))
@@ -107,7 +150,16 @@ enum GroqAPI {
                 return
             }
 
-            guard let http = response as? HTTPURLResponse else {
+            guard let http else {
+                logLatency(
+                    totalMs: totalMs,
+                    readMs: readMs,
+                    buildMs: buildMs,
+                    attempt: attempt,
+                    statusCode: nil,
+                    requestID: requestID,
+                    note: "invalid-response"
+                )
                 completion(.failure(.other("Invalid server response")))
                 return
             }
@@ -115,6 +167,15 @@ enum GroqAPI {
             let payload = data ?? Data()
 
             guard http.statusCode == 200 else {
+                logLatency(
+                    totalMs: totalMs,
+                    readMs: readMs,
+                    buildMs: buildMs,
+                    attempt: attempt,
+                    statusCode: http.statusCode,
+                    requestID: requestID,
+                    note: "http-error"
+                )
                 completion(.failure(mapHTTPError(status: http.statusCode, headers: http, body: payload)))
                 return
             }
@@ -123,12 +184,59 @@ enum GroqAPI {
                 let text = String(data: payload, encoding: .utf8)?.trimmingCharacters(in: .whitespacesAndNewlines),
                 !text.isEmpty
             else {
+                logLatency(
+                    totalMs: totalMs,
+                    readMs: readMs,
+                    buildMs: buildMs,
+                    attempt: attempt,
+                    statusCode: http.statusCode,
+                    requestID: requestID,
+                    note: "empty-transcription"
+                )
                 completion(.failure(.emptyTranscription))
                 return
             }
 
+            logLatency(
+                totalMs: totalMs,
+                readMs: readMs,
+                buildMs: buildMs,
+                attempt: attempt,
+                statusCode: http.statusCode,
+                requestID: requestID,
+                note: "ok"
+            )
             completion(.success(text))
         }.resume()
+    }
+
+    private static func elapsedMs(since start: CFAbsoluteTime) -> Double {
+        (CFAbsoluteTimeGetCurrent() - start) * 1000
+    }
+
+    private static func logLatency(
+        totalMs: Double,
+        readMs: Double,
+        buildMs: Double,
+        attempt: Int,
+        statusCode: Int?,
+        requestID: String,
+        note: String
+    ) {
+        guard AppConstants.Diagnostics.debugLoggingEnabled || attempt > 1 || totalMs >= latencyLogThresholdMs else { return }
+
+        let status = statusCode.map(String.init) ?? "n/a"
+        let message = String(
+            format: "transcription latency total=%.0fms read=%.0fms build=%.0fms attempt=%d status=%@ request_id=%@ note=%@",
+            totalMs,
+            readMs,
+            buildMs,
+            attempt,
+            status,
+            requestID,
+            note
+        )
+        AppLog.notice(message, category: .network, force: true)
     }
 
     private static func mapHTTPError(status: Int, headers: HTTPURLResponse, body: Data) -> TranscriptionError {
