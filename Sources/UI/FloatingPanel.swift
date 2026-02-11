@@ -1,4 +1,5 @@
 import Cocoa
+import QuartzCore
 
 final class FloatingPanel: NSPanel {
     let waveformView: WaveformView
@@ -59,7 +60,17 @@ final class WaveformView: NSView {
     private var displayState: DisplayState = .idle
     private let barCount = 48
     private var barHeights: [CGFloat] = Array(repeating: 0, count: 48)
-    private var animTimer: Timer?
+    private var barWriteHead = 0
+
+    private var animationDisplayLink: CADisplayLink?
+    private var lastTickTime: CFTimeInterval?
+
+    private var frameCount = 0
+    private var lateFrameCount = 0
+    private var maxFrameGapMs: Double = 0
+    private var activeAnimationState: DisplayState = .idle
+
+    private let processingSpeedPerSecond: CGFloat = 0.66
     private var processingProgress: CGFloat = 0
     private var processingForward = true
     private weak var levelSource: AudioRecorder?
@@ -79,6 +90,7 @@ final class WaveformView: NSView {
         self.levelSource = levelSource
         displayState = .recording
         barHeights = Array(repeating: 0, count: barCount)
+        barWriteHead = 0
         startAnimating()
     }
 
@@ -93,6 +105,7 @@ final class WaveformView: NSView {
         displayState = .idle
         stopAnimating()
         barHeights = Array(repeating: 0, count: barCount)
+        barWriteHead = 0
         needsDisplay = true
     }
 
@@ -104,32 +117,86 @@ final class WaveformView: NSView {
 
     func startAnimating() {
         stopAnimating()
-        animTimer = Timer.scheduledTimer(withTimeInterval: 1.0 / 30.0, repeats: true) { [weak self] _ in
-            guard let self else { return }
-            switch displayState {
-            case .recording:
-                barHeights.removeFirst()
-                barHeights.append(CGFloat(levelSource?.currentLevel ?? 0))
-            case .processing:
-                processingProgress += processingForward ? 0.022 : -0.022
-                if processingProgress >= 1 {
-                    processingProgress = 1
-                    processingForward = false
-                }
-                if processingProgress <= 0 {
-                    processingProgress = 0
-                    processingForward = true
-                }
-            case .idle, .error:
-                break
-            }
-            needsDisplay = true
-        }
+
+        frameCount = 0
+        lateFrameCount = 0
+        maxFrameGapMs = 0
+        lastTickTime = nil
+        activeAnimationState = displayState
+
+        let link = displayLink(target: self, selector: #selector(handleDisplayLinkTick(_:)))
+        link.add(to: .main, forMode: .common)
+        animationDisplayLink = link
     }
 
     func stopAnimating() {
-        animTimer?.invalidate()
-        animTimer = nil
+        if frameCount > 0 {
+            AppLog.debug(
+                String(
+                    format: "animation summary state=%@ frames=%d late=%d max_gap=%.1fms",
+                    describe(activeAnimationState),
+                    frameCount,
+                    lateFrameCount,
+                    maxFrameGapMs
+                ),
+                category: .animation
+            )
+        }
+
+        animationDisplayLink?.invalidate()
+        animationDisplayLink = nil
+        lastTickTime = nil
+        frameCount = 0
+        lateFrameCount = 0
+        maxFrameGapMs = 0
+        activeAnimationState = .idle
+    }
+
+    @objc private func handleDisplayLinkTick(_ link: CADisplayLink) {
+        let now = CACurrentMediaTime()
+        let dt: CFTimeInterval
+
+        if let lastTickTime {
+            dt = max(0, min(now - lastTickTime, 0.2))
+        } else {
+            dt = 1.0 / 60.0
+        }
+
+        self.lastTickTime = now
+        frameCount += 1
+
+        let dtMs = dt * 1000
+        maxFrameGapMs = max(maxFrameGapMs, dtMs)
+        if dtMs > 40 {
+            lateFrameCount += 1
+        }
+        if dtMs > 120 {
+            AppLog.debug(
+                String(format: "animation gap state=%@ dt=%.1fms", describe(displayState), dtMs),
+                category: .animation
+            )
+        }
+
+        switch displayState {
+        case .recording:
+            barHeights[barWriteHead] = CGFloat(levelSource?.currentLevel ?? 0)
+            barWriteHead = (barWriteHead + 1) % barCount
+        case .processing:
+            let delta = processingSpeedPerSecond * CGFloat(dt)
+            processingProgress += processingForward ? delta : -delta
+
+            if processingProgress >= 1 {
+                processingProgress = 1
+                processingForward = false
+            } else if processingProgress <= 0 {
+                processingProgress = 0
+                processingForward = true
+            }
+        case .idle, .error:
+            break
+        }
+
+        needsDisplay = true
     }
 
     override func draw(_ dirtyRect: NSRect) {
@@ -214,7 +281,8 @@ final class WaveformView: NSView {
         let gap: CGFloat = 1.5
 
         for i in 0..<barCount {
-            let heightScale = barHeights[i]
+            let index = (barWriteHead + i) % barCount
+            let heightScale = barHeights[index]
             let barHeight = max(heightScale * rect.height, 2)
             let x = rect.minX + CGFloat(i) * width
             let alpha = 0.5 + heightScale * 0.5
@@ -258,5 +326,14 @@ final class WaveformView: NSView {
         let string = NSAttributedString(string: "⚠ \(message)", attributes: attrs)
         let size = string.size()
         string.draw(at: NSPoint(x: rect.midX - size.width / 2, y: rect.midY - size.height / 2))
+    }
+
+    private func describe(_ state: DisplayState) -> String {
+        switch state {
+        case .idle: return "idle"
+        case .recording: return "recording"
+        case .processing: return "processing"
+        case .error: return "error"
+        }
     }
 }
