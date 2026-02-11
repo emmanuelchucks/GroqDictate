@@ -173,7 +173,7 @@ final class AudioRecorder {
             try trimmedWAV.write(to: wavURL, options: .atomic)
             bytesWritten = UInt32(trimmedPCM.count)
         } catch {
-            NSLog("GroqDictate: failed to trim silence (\(error.localizedDescription))")
+            AppLog.error("failed to trim silence (\(error.localizedDescription))", category: .audio)
         }
     }
 
@@ -260,7 +260,7 @@ final class AudioRecorder {
             )
         }
         if status != noErr {
-            NSLog("GroqDictate: failed to set input device '\(uid)' (status \(status))")
+            AppLog.error("failed to set input device '\(uid)' (status \(status))", category: .audio)
         }
     }
 

@@ -36,6 +36,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var lastAudioFileURL: URL?
 
     func applicationDidFinishLaunching(_ notification: Notification) {
+        AppLog.debug("application did finish launching", category: .app)
         buildAppMenu()
         buildMenuBar()
         wireFocusTracking()
@@ -51,6 +52,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     func applicationShouldHandleReopen(_ sender: NSApplication, hasVisibleWindows flag: Bool) -> Bool {
+        AppLog.debug("reopen requested while state=\(describe(state))", category: .app)
         switch state {
         case .idle:
             showSetup(isOnboarding: !Config.hasAPIKey)
@@ -69,6 +71,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             switch state {
             case .recording, .processing:
                 dictationTargetApp = app
+                AppLog.debug("dictation target updated to \(describe(app))", category: .focus)
             case .idle, .error:
                 break
             }
@@ -128,6 +131,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         statusItem.button?.image = NSImage(systemSymbolName: "waveform", accessibilityDescription: AppStrings.App.iconAccessibilityDescription)
 
         let menu = NSMenu()
+        menu.addItem(NSMenuItem(title: AppStrings.Menu.about, action: #selector(showAbout), keyEquivalent: ""))
+        menu.addItem(.separator())
         menu.addItem(NSMenuItem(title: AppStrings.Menu.triggerHint, action: nil, keyEquivalent: ""))
         menu.addItem(NSMenuItem(title: AppStrings.Menu.cancelHint, action: nil, keyEquivalent: ""))
         menu.addItem(.separator())
@@ -141,6 +146,19 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     @objc private func showSetupFromMenu() {
         showSetup(isOnboarding: false)
+    }
+
+    @objc private func showAbout() {
+        let returnApp = focusTracker.currentExternalApp()
+        NSApp.activate(ignoringOtherApps: true)
+
+        let version = Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String
+        switch AboutDialog.present(version: version) {
+        case .openGitHub:
+            NSWorkspace.shared.open(AppConstants.URLs.projectGitHub)
+        case .dismiss:
+            focusTracker.reactivate(returnApp)
+        }
     }
 
     private func showSetup(isOnboarding: Bool) {
@@ -239,7 +257,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private func requestAccessibilityThenStart() {
         hotkeys.start()
 
-        guard !AXIsProcessTrusted() else { return }
+        guard !AXIsProcessTrusted() else {
+            AppLog.debug("accessibility already trusted", category: .app)
+            return
+        }
+
+        AppLog.notice("accessibility not trusted, prompting user", category: .app, force: true)
 
         let options = [kAXTrustedCheckOptionPrompt.takeUnretainedValue(): true] as CFDictionary
         _ = AXIsProcessTrustedWithOptions(options)
@@ -262,6 +285,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     private func toggle() {
+        AppLog.debug("toggle received in state=\(describe(state))", category: .hotkey)
         switch state {
         case .idle:
             startRecording()
@@ -275,6 +299,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     private func handleEscape() {
+        AppLog.debug("escape received in state=\(describe(state))", category: .hotkey)
         switch state {
         case .recording, .processing:
             cancel()
@@ -288,11 +313,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private func startRecording() {
         let micStatus = AVCaptureDevice.authorizationStatus(for: .audio)
         if micStatus == .denied || micStatus == .restricted {
+            AppLog.notice("recording blocked: microphone permission denied", category: .audio, force: true)
             showError(kind: .micDenied, message: AppStrings.Errors.micDenied, action: .settings)
             return
         }
 
         dictationTargetApp = focusTracker.currentExternalApp()
+        AppLog.debug("recording requested, target=\(describe(dictationTargetApp))", category: .audio)
         applyConfig()
 
         panel.waveformView.setRecording(levelSource: recorder)
@@ -300,9 +327,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
         do {
             try recorder.start()
-            state = .recording
+            transition(to: .recording, reason: "recording started")
         } catch {
             recorder.cleanup()
+            AppLog.error("failed to start recording (\(error.localizedDescription))", category: .audio)
             showError(kind: .other, message: AppStrings.Errors.micError, action: .dismissOnly)
         }
     }
@@ -310,12 +338,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private func stopAndTranscribe() {
         guard case .recording = state else { return }
 
-        state = .processing
+        transition(to: .processing, reason: "recording stopped, preparing transcription")
         panel.waveformView.setProcessing()
 
         recorder.stop { [weak self] fileURL in
             guard let self else { return }
             guard case .processing = state else { return }
+            AppLog.debug("audio captured at \(fileURL.path)", category: .audio)
             lastAudioFileURL = fileURL
 
             guard let config = Config.load() else {
@@ -330,6 +359,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     private func transcribe(fileURL: URL, config: Config) {
+        AppLog.debug("starting transcription model=\(config.model) file=\(fileURL.lastPathComponent)", category: .network)
         GroqAPI.transcribe(fileURL: fileURL, config: config) { [weak self] result in
             DispatchQueue.main.async {
                 guard let self else { return }
@@ -337,10 +367,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
                 switch result {
                 case .success(let text):
+                    AppLog.debug("transcription success chars=\(text.count)", category: .network)
                     self.recorder.cleanup()
                     self.lastAudioFileURL = nil
                     self.pasteText(text)
                 case .failure(let error):
+                    AppLog.notice("transcription failed: \(error.errorDescription ?? "unknown")", category: .network, force: true)
                     self.showTranscriptionError(error)
                 }
             }
@@ -349,37 +381,42 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     private func retryTranscription() {
         guard let fileURL = lastAudioFileURL, FileManager.default.fileExists(atPath: fileURL.path) else {
-            state = .idle
+            AppLog.notice("retry requested but no last audio file; starting new recording", category: .network, force: true)
+            transition(to: .idle, reason: "retry fallback to new recording")
             panel.dismiss()
             startRecording()
             return
         }
+
+        AppLog.notice("retrying transcription for \(fileURL.lastPathComponent)", category: .network, force: true)
 
         guard let config = Config.load() else {
             showError(kind: .invalidKey, message: AppStrings.Errors.invalidKey, action: .settings)
             return
         }
 
-        state = .processing
+        transition(to: .processing, reason: "retry transcription")
         panel.waveformView.setProcessing()
         transcribe(fileURL: fileURL, config: config)
     }
 
     private func cancel() {
+        AppLog.notice("cancel requested in state=\(describe(state))", category: .app, force: true)
         if case .recording = state {
             recorder.stop(processRecording: false) { _ in }
         }
         recorder.cleanup()
         lastAudioFileURL = nil
-        state = .idle
+        transition(to: .idle, reason: "cancel")
         panel.dismiss()
         focusTracker.reactivate(dictationTargetApp)
     }
 
     private func dismissError() {
+        AppLog.debug("dismissing error state", category: .app)
         recorder.cleanup()
         lastAudioFileURL = nil
-        state = .idle
+        transition(to: .idle, reason: "error dismissed")
         panel.dismiss()
         focusTracker.reactivate(dictationTargetApp)
     }
@@ -402,44 +439,80 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     private func showError(kind: ErrorKind, message: String, action: WaveformView.ErrorAction) {
-        state = .error(kind)
+        AppLog.notice("showing error kind=\(describe(kind)) message=\(message)", category: .ui, force: true)
+        transition(to: .error(kind), reason: "error shown")
         panel.waveformView.showError(message, action: action)
         panel.show()
     }
 
     private func handleErrorAction(_ kind: ErrorKind) {
+        AppLog.debug("error action invoked for kind=\(describe(kind))", category: .ui)
         switch kind {
         case .retryable:
             retryTranscription()
         case .tooLarge:
             recorder.cleanup()
             lastAudioFileURL = nil
-            state = .idle
+            transition(to: .idle, reason: "too-large error action")
             startRecording()
         case .invalidKey, .restrictedAccount:
             panel.dismiss()
-            state = .idle
+            transition(to: .idle, reason: "open settings from error action")
             showSetup(isOnboarding: false)
         case .micDenied:
             NSWorkspace.shared.open(AppConstants.URLs.microphonePrivacySettings)
             panel.dismiss()
-            state = .idle
+            transition(to: .idle, reason: "open mic settings from error action")
         case .other:
             break
         }
     }
 
     private func pasteText(_ text: String) {
+        AppLog.debug("pasting transcription chars=\(text.count) target=\(describe(dictationTargetApp))", category: .app)
         NSPasteboard.general.clearContents()
         NSPasteboard.general.setString(text, forType: .string)
 
         panel.dismiss()
-        state = .idle
+        transition(to: .idle, reason: "transcription pasted")
         focusTracker.reactivate(dictationTargetApp)
 
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) { [weak self] in
             self?.simulatePaste()
         }
+    }
+
+    private func transition(to newState: DictationState, reason: String) {
+        let oldState = state
+        state = newState
+        AppLog.debug("state \(describe(oldState)) -> \(describe(newState)) (\(reason))", category: .app)
+    }
+
+    private func describe(_ state: DictationState) -> String {
+        switch state {
+        case .idle: return "idle"
+        case .recording: return "recording"
+        case .processing: return "processing"
+        case .error(let kind): return "error(\(describe(kind)))"
+        }
+    }
+
+    private func describe(_ kind: ErrorKind) -> String {
+        switch kind {
+        case .retryable: return "retryable"
+        case .tooLarge: return "tooLarge"
+        case .invalidKey: return "invalidKey"
+        case .micDenied: return "micDenied"
+        case .restrictedAccount: return "restrictedAccount"
+        case .other: return "other"
+        }
+    }
+
+    private func describe(_ app: NSRunningApplication?) -> String {
+        guard let app else { return "n/a" }
+        let name = app.localizedName ?? "unknown"
+        let bundleID = app.bundleIdentifier ?? "unknown.bundle"
+        return "\(name) (\(bundleID))"
     }
 
     private func simulatePaste() {

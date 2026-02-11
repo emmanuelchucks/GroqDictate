@@ -12,10 +12,12 @@ final class HotkeyMonitor {
     private var rightCommandDown = false
 
     func start() {
+        AppLog.debug("starting hotkey monitor", category: .hotkey)
         installEventTapOrFallback()
     }
 
     func stop() {
+        AppLog.debug("stopping hotkey monitor", category: .hotkey)
         removeAllMonitors()
     }
 
@@ -39,10 +41,12 @@ final class HotkeyMonitor {
             },
             userInfo: selfPtr
         ) else {
+            AppLog.notice("event tap unavailable, using NSEvent fallback", category: .hotkey, force: true)
             installNSEventFallback()
             return
         }
 
+        AppLog.debug("event tap installed", category: .hotkey)
         eventTap = tap
         runLoopSource = CFMachPortCreateRunLoopSource(kCFAllocatorDefault, tap, 0)
         if let runLoopSource {
@@ -52,6 +56,7 @@ final class HotkeyMonitor {
     }
 
     private func installNSEventFallback() {
+        AppLog.debug("installing NSEvent fallback monitors", category: .hotkey)
         globalMonitor = NSEvent.addGlobalMonitorForEvents(matching: [.flagsChanged, .keyDown]) { [weak self] event in
             self?.handleNSEvent(event)
         }
@@ -63,6 +68,7 @@ final class HotkeyMonitor {
     }
 
     private func removeAllMonitors() {
+        AppLog.debug("removing monitors", category: .hotkey)
         if let tap = eventTap {
             CGEvent.tapEnable(tap: tap, enable: false)
             if let runLoopSource {
@@ -85,6 +91,7 @@ final class HotkeyMonitor {
 
     private func handleCGEvent(type: CGEventType, event: CGEvent) -> Unmanaged<CGEvent>? {
         if type == .tapDisabledByTimeout || type == .tapDisabledByUserInput {
+            AppLog.notice("event tap disabled by system, re-enabling", category: .hotkey, force: true)
             if let eventTap {
                 CGEvent.tapEnable(tap: eventTap, enable: true)
             }
@@ -99,6 +106,7 @@ final class HotkeyMonitor {
                 return Unmanaged.passUnretained(event)
             }
 
+            AppLog.debug("escape consumed", category: .hotkey)
             DispatchQueue.main.async { [weak self] in self?.onEscapePress?() }
             return nil
         }
@@ -107,6 +115,7 @@ final class HotkeyMonitor {
             let commandDown = event.flags.contains(.maskCommand)
             if commandDown && !rightCommandDown {
                 rightCommandDown = true
+                AppLog.debug("right command pressed", category: .hotkey)
                 DispatchQueue.main.async { [weak self] in self?.onRightCommandPress?() }
                 return nil
             }
@@ -123,6 +132,7 @@ final class HotkeyMonitor {
         if event.type == .keyDown && event.keyCode == 53 {
             let shouldConsume = shouldConsumeEscape?() ?? false
             guard shouldConsume else { return }
+            AppLog.debug("escape consumed (fallback)", category: .hotkey)
             DispatchQueue.main.async { [weak self] in self?.onEscapePress?() }
             return
         }
@@ -132,6 +142,7 @@ final class HotkeyMonitor {
 
         if commandDown && event.keyCode == 54 && !rightCommandDown {
             rightCommandDown = true
+            AppLog.debug("right command pressed (fallback)", category: .hotkey)
             DispatchQueue.main.async { [weak self] in self?.onRightCommandPress?() }
         } else if !commandDown && rightCommandDown {
             rightCommandDown = false

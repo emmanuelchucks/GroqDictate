@@ -9,8 +9,18 @@ enum AppStrings {
     enum Menu {
         static let triggerHint = "Right ⌘ — start / stop"
         static let cancelHint = "Esc — cancel"
+        static let about = "About GroqDictate"
         static let settings = "Settings…"
         static let quit = "Quit GroqDictate"
+    }
+
+    enum About {
+        static let title = "GroqDictate"
+        static let github = "GitHub"
+        static let dismiss = "OK"
+        static let shortcutsTitle = "Shortcuts"
+        static let triggerShortcut = "Right ⌘  Start/stop"
+        static let cancelShortcut = "Esc  Cancel/dismiss"
     }
 
     enum EditMenu {
