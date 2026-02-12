@@ -36,6 +36,8 @@ enum AppStrings {
     enum Panel {
         static let recording = "● Recording"
         static let transcribing = "⟳ Transcribing…"
+        static let copiedToClipboard = "✓ Copied to clipboard"
+        static let clipboardWriteFailed = "⚠ Clipboard unavailable"
         static let escCancel = "esc to cancel"
         static let escDismiss = "esc to dismiss"
         static let retry = "⌘ retry"

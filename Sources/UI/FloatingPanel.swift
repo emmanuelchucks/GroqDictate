@@ -54,6 +54,7 @@ final class WaveformView: NSView {
         case idle
         case recording
         case processing
+        case notice(String)
         case error(String, ErrorAction)
     }
 
@@ -106,6 +107,12 @@ final class WaveformView: NSView {
         stopAnimating()
         barHeights = Array(repeating: 0, count: barCount)
         barWriteHead = 0
+        needsDisplay = true
+    }
+
+    func showNotice(_ message: String) {
+        displayState = .notice(message)
+        stopAnimating()
         needsDisplay = true
     }
 
@@ -192,7 +199,7 @@ final class WaveformView: NSView {
                 processingProgress = 0
                 processingForward = true
             }
-        case .idle, .error:
+        case .idle, .notice, .error:
             break
         }
 
@@ -217,6 +224,8 @@ final class WaveformView: NSView {
             drawBars(in: topRect, ctx: ctx)
         case .processing:
             drawProcessing(in: topRect, ctx: ctx)
+        case .notice(let message):
+            drawNoticeText(message, in: topRect)
         case .error(let message, _):
             drawErrorText(message, in: topRect)
         }
@@ -236,6 +245,8 @@ final class WaveformView: NSView {
         case .processing:
             drawLabel(AppStrings.Panel.transcribing, color: .systemOrange, at: NSPoint(x: 16, y: y))
             drawHint(AppStrings.Panel.escCancel, in: bounds, y: y)
+        case .notice:
+            drawHint(AppStrings.Panel.escDismiss, in: bounds, y: y)
         case .error(_, let action):
             let actionLabel: String? = switch action {
             case .retry: AppStrings.Panel.retry
@@ -318,12 +329,20 @@ final class WaveformView: NSView {
         }
     }
 
+    private func drawNoticeText(_ message: String, in rect: NSRect) {
+        drawCenteredText(message, color: .secondaryLabelColor, in: rect)
+    }
+
     private func drawErrorText(_ message: String, in rect: NSRect) {
+        drawCenteredText("⚠ \(message)", color: .systemOrange, in: rect)
+    }
+
+    private func drawCenteredText(_ text: String, color: NSColor, in rect: NSRect) {
         let attrs: [NSAttributedString.Key: Any] = [
             .font: NSFont.systemFont(ofSize: 13, weight: .medium),
-            .foregroundColor: NSColor.systemOrange
+            .foregroundColor: color
         ]
-        let string = NSAttributedString(string: "⚠ \(message)", attributes: attrs)
+        let string = NSAttributedString(string: text, attributes: attrs)
         let size = string.size()
         string.draw(at: NSPoint(x: rect.midX - size.width / 2, y: rect.midY - size.height / 2))
     }
@@ -333,6 +352,7 @@ final class WaveformView: NSView {
         case .idle: return "idle"
         case .recording: return "recording"
         case .processing: return "processing"
+        case .notice: return "notice"
         case .error: return "error"
         }
     }

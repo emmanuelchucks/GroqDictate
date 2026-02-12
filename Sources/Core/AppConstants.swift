@@ -20,4 +20,9 @@ enum AppConstants {
     enum Diagnostics {
         static let debugLoggingEnabled = ProcessInfo.processInfo.environment["GROQDICTATE_DEBUG"] == "1"
     }
+
+    enum Timing {
+        static let simulatedPasteDelay: TimeInterval = 0.05
+        static let noticeDuration: TimeInterval = 1.2
+    }
 }

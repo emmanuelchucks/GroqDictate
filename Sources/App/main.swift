@@ -15,6 +15,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         case idle
         case recording
         case processing
+        case notice
         case error(ErrorKind)
     }
 
@@ -23,6 +24,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private let panel = FloatingPanel()
     private let recorder = AudioRecorder()
     private let focusTracker = FocusTracker()
+    private let pasteTargetInspector = PasteTargetInspector()
     private let hotkeys = HotkeyMonitor()
 
     private var statusItem: NSStatusItem?
@@ -34,6 +36,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var permissionAnchor: NSWindow?
 
     private var lastAudioFileURL: URL?
+    private var panelNoticeToken = UUID()
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         AppLog.debug("application did finish launching", category: .app)
@@ -56,7 +59,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         switch state {
         case .idle:
             showSetup(isOnboarding: !Config.hasAPIKey)
-        case .recording, .processing, .error:
+        case .recording, .processing, .notice, .error:
             panel.orderFront(nil)
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) { [weak self] in
                 self?.focusTracker.reactivate(self?.dictationTargetApp)
@@ -72,7 +75,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             case .recording, .processing:
                 dictationTargetApp = app
                 AppLog.debug("dictation target updated to \(describe(app))", category: .focus)
-            case .idle, .error:
+            case .idle, .notice, .error:
                 break
             }
         }
@@ -86,7 +89,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             switch self.state {
             case .idle:
                 return false
-            case .recording, .processing, .error:
+            case .recording, .processing, .notice, .error:
                 return true
             }
         }
@@ -282,7 +285,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             startRecording()
         case .recording:
             stopAndTranscribe()
-        case .processing:
+        case .processing, .notice:
             break
         case .error(let kind):
             handleErrorAction(kind)
@@ -294,6 +297,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         switch state {
         case .recording, .processing:
             cancel()
+        case .notice:
+            dismissNotice()
         case .error:
             dismissError()
         case .idle:
@@ -311,6 +316,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
         dictationTargetApp = focusTracker.currentExternalApp()
         AppLog.debug("recording requested, target=\(describe(dictationTargetApp))", category: .audio)
+        invalidatePanelNotice()
         applyConfig()
 
         panel.waveformView.setRecording(levelSource: recorder)
@@ -399,6 +405,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         resetToIdle(reason: "cancel")
     }
 
+    private func dismissNotice() {
+        AppLog.debug("dismissing notice state", category: .app)
+        invalidatePanelNotice()
+        transition(to: .idle, reason: "notice dismissed")
+        panel.dismiss()
+    }
+
     private func dismissError() {
         AppLog.debug("dismissing error state", category: .app)
         resetToIdle(reason: "error dismissed")
@@ -427,6 +440,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     private func showError(kind: ErrorKind, message: String, action: WaveformView.ErrorAction) {
         AppLog.debug("showing error kind=\(describe(kind)) message=\(message)", category: .ui)
+        invalidatePanelNotice()
         transition(to: .error(kind), reason: "error shown")
         panel.waveformView.showError(message, action: action)
         panel.show()
@@ -456,6 +470,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private func resetToIdle(reason: String, reactivateTarget: Bool = true) {
         recorder.cleanup()
         lastAudioFileURL = nil
+        invalidatePanelNotice()
         transition(to: .idle, reason: reason)
         panel.dismiss()
         if reactivateTarget {
@@ -465,15 +480,58 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     private func pasteText(_ text: String) {
         AppLog.debug("pasting transcription chars=\(text.count) target=\(describe(dictationTargetApp))", category: .app)
-        NSPasteboard.general.clearContents()
-        NSPasteboard.general.setString(text, forType: .string)
 
-        panel.dismiss()
-        transition(to: .idle, reason: "transcription pasted")
-        focusTracker.reactivate(dictationTargetApp)
+        guard writeToClipboard(text) else {
+            AppLog.error("failed to write transcription to clipboard", category: .app)
+            showTransientPanelNotice(AppStrings.Panel.clipboardWriteFailed)
+            return
+        }
 
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) { [weak self] in
-            self?.simulatePaste()
+        if pasteTargetInspector.canAutoPaste(into: dictationTargetApp) {
+            panel.dismiss()
+            transition(to: .idle, reason: "transcription pasted")
+            focusTracker.reactivate(dictationTargetApp)
+
+            DispatchQueue.main.asyncAfter(deadline: .now() + AppConstants.Timing.simulatedPasteDelay) { [weak self] in
+                self?.simulatePaste()
+            }
+            return
+        }
+
+        AppLog.debug("focused element not pasteable; keeping transcription in clipboard", category: .focus)
+        showTransientPanelNotice(AppStrings.Panel.copiedToClipboard, reactivateTargetOnDismiss: true)
+    }
+
+    private func writeToClipboard(_ text: String) -> Bool {
+        let pasteboard = NSPasteboard.general
+        pasteboard.clearContents()
+        return pasteboard.setString(text, forType: .string)
+    }
+
+    private func invalidatePanelNotice() {
+        panelNoticeToken = UUID()
+    }
+
+    private func showTransientPanelNotice(
+        _ message: String,
+        duration: TimeInterval = AppConstants.Timing.noticeDuration,
+        reactivateTargetOnDismiss: Bool = false
+    ) {
+        invalidatePanelNotice()
+        let token = panelNoticeToken
+
+        transition(to: .notice, reason: "panel notice shown")
+        panel.waveformView.showNotice(message)
+        panel.show()
+
+        DispatchQueue.main.asyncAfter(deadline: .now() + duration) { [weak self] in
+            guard let self, self.panelNoticeToken == token else { return }
+            guard case .notice = self.state else { return }
+            self.transition(to: .idle, reason: "panel notice dismissed")
+            self.panel.dismiss()
+            if reactivateTargetOnDismiss {
+                self.focusTracker.reactivate(self.dictationTargetApp)
+            }
         }
     }
 
@@ -488,6 +546,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         case .idle: return "idle"
         case .recording: return "recording"
         case .processing: return "processing"
+        case .notice: return "notice"
         case .error(let kind): return "error(\(describe(kind)))"
         }
     }
