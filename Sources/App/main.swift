@@ -83,16 +83,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         hotkeys.onEscapePress = { [weak self] in self?.handleEscape() }
         hotkeys.shouldConsumeEscape = { [weak self] in
             guard let self else { return false }
-            return isEscapeActiveState(self.state)
-        }
-    }
-
-    private func isEscapeActiveState(_ state: DictationState) -> Bool {
-        switch state {
-        case .recording, .processing, .error:
-            return true
-        case .idle:
-            return false
+            switch self.state {
+            case .idle:
+                return false
+            case .recording, .processing, .error:
+                return true
+            }
         }
     }
 
@@ -194,13 +190,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     private func handlePostSettingsSave() {
-        let micStatus = AVCaptureDevice.authorizationStatus(for: .audio)
-        if micStatus == .notDetermined {
+        if AVCaptureDevice.authorizationStatus(for: .audio) == .notDetermined {
             startPermissionFlow()
-        } else {
-            requestAccessibilityThenStart()
-            focusTracker.reactivate(settingsReturnApp)
+            return
         }
+
+        finishPermissionFlowAndStart()
     }
 
     private func startPermissionFlow() {
@@ -229,28 +224,24 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         permissionAnchor = nil
     }
 
+    private func finishPermissionFlowAndStart() {
+        requestAccessibilityThenStart()
+        endPermissionFlow()
+        focusTracker.reactivate(settingsReturnApp)
+    }
+
     private func requestPermissionsIfNeeded() {
         switch AVCaptureDevice.authorizationStatus(for: .audio) {
-        case .authorized:
-            requestAccessibilityThenStart()
-            endPermissionFlow()
-            focusTracker.reactivate(settingsReturnApp)
         case .notDetermined:
             AVCaptureDevice.requestAccess(for: .audio) { [weak self] _ in
                 DispatchQueue.main.asyncAfter(deadline: .now() + 0.6) {
-                    self?.requestAccessibilityThenStart()
-                    self?.endPermissionFlow()
-                    self?.focusTracker.reactivate(self?.settingsReturnApp)
+                    self?.finishPermissionFlowAndStart()
                 }
             }
-        case .denied, .restricted:
-            requestAccessibilityThenStart()
-            endPermissionFlow()
-            focusTracker.reactivate(settingsReturnApp)
+        case .authorized, .denied, .restricted:
+            finishPermissionFlowAndStart()
         @unknown default:
-            requestAccessibilityThenStart()
-            endPermissionFlow()
-            focusTracker.reactivate(settingsReturnApp)
+            finishPermissionFlowAndStart()
         }
     }
 
@@ -405,37 +396,33 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         if case .recording = state {
             recorder.stop(processRecording: false) { _ in }
         }
-        recorder.cleanup()
-        lastAudioFileURL = nil
-        transition(to: .idle, reason: "cancel")
-        panel.dismiss()
-        focusTracker.reactivate(dictationTargetApp)
+        resetToIdle(reason: "cancel")
     }
 
     private func dismissError() {
         AppLog.debug("dismissing error state", category: .app)
-        recorder.cleanup()
-        lastAudioFileURL = nil
-        transition(to: .idle, reason: "error dismissed")
-        panel.dismiss()
-        focusTracker.reactivate(dictationTargetApp)
+        resetToIdle(reason: "error dismissed")
     }
 
     private func showTranscriptionError(_ error: GroqAPI.TranscriptionError) {
+        let presentation: (kind: ErrorKind, message: String, action: WaveformView.ErrorAction)
+
         switch error {
         case .rateLimited, .serverError, .timedOut, .emptyTranscription, .failedDependency, .capacityExceeded:
-            showError(kind: .retryable, message: error.errorDescription ?? AppStrings.Errors.tryAgain, action: .retry)
+            presentation = (.retryable, error.errorDescription ?? AppStrings.Errors.tryAgain, .retry)
         case .tooLarge:
-            showError(kind: .tooLarge, message: error.errorDescription ?? AppStrings.Errors.recordingTooLarge, action: .newRecording)
+            presentation = (.tooLarge, error.errorDescription ?? AppStrings.Errors.recordingTooLarge, .newRecording)
         case .invalidKey:
-            showError(kind: .invalidKey, message: AppStrings.Errors.invalidKey, action: .settings)
+            presentation = (.invalidKey, AppStrings.Errors.invalidKey, .settings)
         case .accountRestricted:
-            showError(kind: .restrictedAccount, message: AppStrings.Errors.orgRestricted, action: .settings)
+            presentation = (.restrictedAccount, AppStrings.Errors.orgRestricted, .settings)
         case .forbidden(let message), .badRequest(let message), .unprocessable(let message), .other(let message):
-            showError(kind: .other, message: message, action: .dismissOnly)
+            presentation = (.other, message, .dismissOnly)
         case .notFound:
-            showError(kind: .other, message: AppStrings.Errors.resourceNotFound, action: .dismissOnly)
+            presentation = (.other, AppStrings.Errors.resourceNotFound, .dismissOnly)
         }
+
+        showError(kind: presentation.kind, message: presentation.message, action: presentation.action)
     }
 
     private func showError(kind: ErrorKind, message: String, action: WaveformView.ErrorAction) {
@@ -451,9 +438,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         case .retryable:
             retryTranscription()
         case .tooLarge:
-            recorder.cleanup()
-            lastAudioFileURL = nil
-            transition(to: .idle, reason: "too-large error action")
+            resetToIdle(reason: "too-large error action", reactivateTarget: false)
             startRecording()
         case .invalidKey, .restrictedAccount:
             panel.dismiss()
@@ -465,6 +450,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             transition(to: .idle, reason: "open mic settings from error action")
         case .other:
             break
+        }
+    }
+
+    private func resetToIdle(reason: String, reactivateTarget: Bool = true) {
+        recorder.cleanup()
+        lastAudioFileURL = nil
+        transition(to: .idle, reason: reason)
+        panel.dismiss()
+        if reactivateTarget {
+            focusTracker.reactivate(dictationTargetApp)
         }
     }
 

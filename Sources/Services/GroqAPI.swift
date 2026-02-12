@@ -112,6 +112,18 @@ enum GroqAPI {
             let http = response as? HTTPURLResponse
             let requestID = http?.value(forHTTPHeaderField: "x-request-id") ?? "n/a"
 
+            func log(_ note: String, statusCode: Int? = http?.statusCode) {
+                logLatency(
+                    totalMs: totalMs,
+                    readMs: readMs,
+                    buildMs: buildMs,
+                    attempt: attempt,
+                    statusCode: statusCode,
+                    requestID: requestID,
+                    note: note
+                )
+            }
+
             if let error {
                 let nsError = error as NSError
                 let isRetryableTransport = nsError.code == NSURLErrorTimedOut
@@ -132,34 +144,13 @@ enum GroqAPI {
                     return
                 }
 
-                logLatency(
-                    totalMs: totalMs,
-                    readMs: readMs,
-                    buildMs: buildMs,
-                    attempt: attempt,
-                    statusCode: nil,
-                    requestID: requestID,
-                    note: "error=\(nsError.code)"
-                )
-
-                if nsError.code == NSURLErrorTimedOut {
-                    completion(.failure(.timedOut))
-                } else {
-                    completion(.failure(.other("Network error")))
-                }
+                log("error=\(nsError.code)", statusCode: nil)
+                completion(.failure(nsError.code == NSURLErrorTimedOut ? .timedOut : .other("Network error")))
                 return
             }
 
             guard let http else {
-                logLatency(
-                    totalMs: totalMs,
-                    readMs: readMs,
-                    buildMs: buildMs,
-                    attempt: attempt,
-                    statusCode: nil,
-                    requestID: requestID,
-                    note: "invalid-response"
-                )
+                log("invalid-response", statusCode: nil)
                 completion(.failure(.other("Invalid server response")))
                 return
             }
@@ -167,15 +158,7 @@ enum GroqAPI {
             let payload = data ?? Data()
 
             guard http.statusCode == 200 else {
-                logLatency(
-                    totalMs: totalMs,
-                    readMs: readMs,
-                    buildMs: buildMs,
-                    attempt: attempt,
-                    statusCode: http.statusCode,
-                    requestID: requestID,
-                    note: "http-error"
-                )
+                log("http-error")
                 completion(.failure(mapHTTPError(status: http.statusCode, headers: http, body: payload)))
                 return
             }
@@ -184,28 +167,12 @@ enum GroqAPI {
                 let text = String(data: payload, encoding: .utf8)?.trimmingCharacters(in: .whitespacesAndNewlines),
                 !text.isEmpty
             else {
-                logLatency(
-                    totalMs: totalMs,
-                    readMs: readMs,
-                    buildMs: buildMs,
-                    attempt: attempt,
-                    statusCode: http.statusCode,
-                    requestID: requestID,
-                    note: "empty-transcription"
-                )
+                log("empty-transcription")
                 completion(.failure(.emptyTranscription))
                 return
             }
 
-            logLatency(
-                totalMs: totalMs,
-                readMs: readMs,
-                buildMs: buildMs,
-                attempt: attempt,
-                statusCode: http.statusCode,
-                requestID: requestID,
-                note: "ok"
-            )
+            log("ok")
             completion(.success(text))
         }.resume()
     }

@@ -98,54 +98,50 @@ final class HotkeyMonitor {
             return Unmanaged.passUnretained(event)
         }
 
-        let keyCode = event.getIntegerValueField(.keyboardEventKeycode)
+        let keyCode = Int(event.getIntegerValueField(.keyboardEventKeycode))
 
-        if type == .keyDown && keyCode == 53 {
-            let shouldConsume = shouldConsumeEscape?() ?? false
-            guard shouldConsume else {
-                return Unmanaged.passUnretained(event)
-            }
-
-            AppLog.debug("escape consumed", category: .hotkey)
-            DispatchQueue.main.async { [weak self] in self?.onEscapePress?() }
+        if type == .keyDown, keyCode == 53, consumeEscape(logSuffix: "") {
             return nil
         }
 
-        if type == .flagsChanged && keyCode == 54 {
-            let commandDown = event.flags.contains(.maskCommand)
-            if commandDown && !rightCommandDown {
-                rightCommandDown = true
-                AppLog.debug("right command pressed", category: .hotkey)
-                DispatchQueue.main.async { [weak self] in self?.onRightCommandPress?() }
-                return nil
-            }
-            if !commandDown && rightCommandDown {
-                rightCommandDown = false
-                return nil
-            }
+        if type == .flagsChanged, keyCode == 54 {
+            let consumed = handleRightCommand(isDown: event.flags.contains(.maskCommand), logSuffix: "")
+            return consumed ? nil : Unmanaged.passUnretained(event)
         }
 
         return Unmanaged.passUnretained(event)
     }
 
     private func handleNSEvent(_ event: NSEvent) {
-        if event.type == .keyDown && event.keyCode == 53 {
-            let shouldConsume = shouldConsumeEscape?() ?? false
-            guard shouldConsume else { return }
-            AppLog.debug("escape consumed (fallback)", category: .hotkey)
-            DispatchQueue.main.async { [weak self] in self?.onEscapePress?() }
+        if event.type == .keyDown, event.keyCode == 53 {
+            _ = consumeEscape(logSuffix: " (fallback)")
             return
         }
 
-        guard event.type == .flagsChanged else { return }
-        let commandDown = event.modifierFlags.contains(.command)
+        guard event.type == .flagsChanged, event.keyCode == 54 else { return }
+        _ = handleRightCommand(isDown: event.modifierFlags.contains(.command), logSuffix: " (fallback)")
+    }
 
-        if commandDown && event.keyCode == 54 && !rightCommandDown {
+    private func consumeEscape(logSuffix: String) -> Bool {
+        guard shouldConsumeEscape?() ?? false else { return false }
+        AppLog.debug("escape consumed\(logSuffix)", category: .hotkey)
+        DispatchQueue.main.async { [weak self] in self?.onEscapePress?() }
+        return true
+    }
+
+    private func handleRightCommand(isDown: Bool, logSuffix: String) -> Bool {
+        if isDown && !rightCommandDown {
             rightCommandDown = true
-            AppLog.debug("right command pressed (fallback)", category: .hotkey)
+            AppLog.debug("right command pressed\(logSuffix)", category: .hotkey)
             DispatchQueue.main.async { [weak self] in self?.onRightCommandPress?() }
-        } else if !commandDown && rightCommandDown {
-            rightCommandDown = false
+            return true
         }
+
+        if !isDown && rightCommandDown {
+            rightCommandDown = false
+            return true
+        }
+
+        return false
     }
 }
