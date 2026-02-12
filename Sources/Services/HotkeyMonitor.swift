@@ -1,6 +1,11 @@
 import Cocoa
 
 final class HotkeyMonitor {
+    private enum KeyCode {
+        static let escape: Int = 53
+        static let rightCommand: Int = 54
+    }
+
     var onRightCommandPress: (() -> Void)?
     var onEscapePress: (() -> Void)?
     var shouldConsumeEscape: (() -> Bool)?
@@ -100,11 +105,11 @@ final class HotkeyMonitor {
 
         let keyCode = Int(event.getIntegerValueField(.keyboardEventKeycode))
 
-        if type == .keyDown, keyCode == 53, consumeEscape(logSuffix: "") {
+        if type == .keyDown, keyCode == KeyCode.escape, consumeEscape(logSuffix: "") {
             return nil
         }
 
-        if type == .flagsChanged, keyCode == 54 {
+        if type == .flagsChanged, keyCode == KeyCode.rightCommand {
             let consumed = handleRightCommand(isDown: event.flags.contains(.maskCommand), logSuffix: "")
             return consumed ? nil : Unmanaged.passUnretained(event)
         }
@@ -113,13 +118,21 @@ final class HotkeyMonitor {
     }
 
     private func handleNSEvent(_ event: NSEvent) {
-        if event.type == .keyDown, event.keyCode == 53 {
+        if event.type == .keyDown, event.keyCode == KeyCode.escape {
             _ = consumeEscape(logSuffix: " (fallback)")
             return
         }
 
-        guard event.type == .flagsChanged, event.keyCode == 54 else { return }
-        _ = handleRightCommand(isDown: event.modifierFlags.contains(.command), logSuffix: " (fallback)")
+        guard event.type == .flagsChanged else { return }
+
+        if event.keyCode == KeyCode.rightCommand {
+            _ = handleRightCommand(isDown: event.modifierFlags.contains(.command), logSuffix: " (fallback)")
+            return
+        }
+
+        if !event.modifierFlags.contains(.command), rightCommandDown {
+            rightCommandDown = false
+        }
     }
 
     private func consumeEscape(logSuffix: String) -> Bool {
