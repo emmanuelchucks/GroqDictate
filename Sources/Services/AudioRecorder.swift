@@ -37,9 +37,12 @@ final class AudioRecorder {
 
     private static let trimWindowMs: Float64 = 20
     private static let trimSpeechRMSThreshold: Float = 0.009
-    private static let trimMinSpeechWindows = 4
-    private static let trimEdgePaddingMs: Float64 = 120
-    private static let trimMinEdgeTrimMs: Float64 = 180
+    private static let trimMinLeadingSpeechWindows = 4
+    private static let trimMinTrailingSpeechWindows = 20
+    private static let trimLeadingPaddingMs: Float64 = 120
+    private static let trimTrailingPaddingMs: Float64 = 40
+    private static let trimMinLeadingTrimMs: Float64 = 180
+    private static let trimMinTrailingTrimMs: Float64 = 60
     private static let trimMinResultMs: Float64 = 300
 
     func start() throws {
@@ -148,13 +151,15 @@ final class AudioRecorder {
 
         guard var (startSample, endSample) = Self.detectSpeechBounds(samples: samples) else { return }
 
-        let paddingSamples = Int(Self.sampleRate * Self.trimEdgePaddingMs / 1000)
-        startSample = max(0, startSample - paddingSamples)
-        endSample = min(sampleCount, endSample + paddingSamples)
+        let leadingPadding = Int(Self.sampleRate * Self.trimLeadingPaddingMs / 1000)
+        let trailingPadding = Int(Self.sampleRate * Self.trimTrailingPaddingMs / 1000)
+        startSample = max(0, startSample - leadingPadding)
+        endSample = min(sampleCount, endSample + trailingPadding)
 
-        let minEdgeTrimSamples = Int(Self.sampleRate * Self.trimMinEdgeTrimMs / 1000)
-        if startSample < minEdgeTrimSamples { startSample = 0 }
-        if (sampleCount - endSample) < minEdgeTrimSamples { endSample = sampleCount }
+        let minLeadingTrim = Int(Self.sampleRate * Self.trimMinLeadingTrimMs / 1000)
+        let minTrailingTrim = Int(Self.sampleRate * Self.trimMinTrailingTrimMs / 1000)
+        if startSample < minLeadingTrim { startSample = 0 }
+        if (sampleCount - endSample) < minTrailingTrim { endSample = sampleCount }
 
         guard startSample < endSample else { return }
         guard !(startSample == 0 && endSample == sampleCount) else { return }
@@ -198,14 +203,15 @@ final class AudioRecorder {
             speechWindows[index] = rms >= Double(trimSpeechRMSThreshold)
         }
 
-        let required = max(1, min(trimMinSpeechWindows, speechWindows.count))
+        let leadingRequired = max(1, min(trimMinLeadingSpeechWindows, speechWindows.count))
+        let trailingRequired = max(1, min(trimMinTrailingSpeechWindows, speechWindows.count))
 
         var firstSpeechWindow: Int?
         var streak = 0
         for index in 0..<speechWindows.count {
             if speechWindows[index] {
                 streak += 1
-                if streak >= required {
+                if streak >= leadingRequired {
                     firstSpeechWindow = index - streak + 1
                     break
                 }
@@ -221,8 +227,8 @@ final class AudioRecorder {
         for index in stride(from: speechWindows.count - 1, through: 0, by: -1) {
             if speechWindows[index] {
                 streak += 1
-                if streak >= required {
-                    lastSpeechWindow = index + required - 1
+                if streak >= trailingRequired {
+                    lastSpeechWindow = index + trailingRequired - 1
                     break
                 }
             } else {

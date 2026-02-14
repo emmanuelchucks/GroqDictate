@@ -82,7 +82,7 @@ enum GroqAPI {
 
         field("model", config.model)
         field("language", config.language)
-        field("response_format", "text")
+        field("response_format", "verbose_json")
         field("temperature", "0")
 
         body.append("--\(boundary)\r\n")
@@ -163,15 +163,13 @@ enum GroqAPI {
                 return
             }
 
-            guard
-                let text = String(data: payload, encoding: .utf8)?.trimmingCharacters(in: .whitespacesAndNewlines),
-                !text.isEmpty
-            else {
+            let text = extractTranscription(from: payload)
+
+            guard let text, !text.isEmpty else {
                 log("empty-transcription")
                 completion(.failure(.emptyTranscription))
                 return
             }
-
             log("ok")
             completion(.success(text))
         }.resume()
@@ -204,6 +202,43 @@ enum GroqAPI {
             note
         )
         AppLog.debug(message, category: .network)
+    }
+
+    private static func extractTranscription(from data: Data) -> String? {
+        guard
+            let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+            let segments = json["segments"] as? [[String: Any]]
+        else {
+            return String(data: data, encoding: .utf8)?.trimmingCharacters(in: .whitespacesAndNewlines)
+        }
+
+        var kept = 0
+        var dropped = 0
+        var lastEnd: Double = 0
+
+        let text = segments.compactMap { segment -> String? in
+            let start = segment["start"] as? Double ?? 0
+            let end = segment["end"] as? Double ?? 0
+            let compressionRatio = segment["compression_ratio"] as? Double ?? 0
+            let gap = start - lastEnd
+
+            if gap > AppConstants.Transcription.maxSegmentGapSeconds && compressionRatio < AppConstants.Transcription.minCompressionRatio {
+                let preview = (segment["text"] as? String ?? "").prefix(40)
+                AppLog.debug(
+                    String(format: "segment dropped t=%.1f-%.1fs gap=%.1fs compress=%.2f text=%@", start, end, gap, compressionRatio, String(preview)),
+                    category: .network
+                )
+                dropped += 1
+                return nil
+            }
+
+            lastEnd = end
+            kept += 1
+            return segment["text"] as? String
+        }.joined().trimmingCharacters(in: .whitespacesAndNewlines)
+
+        AppLog.debug("segments kept=\(kept) dropped=\(dropped)", category: .network)
+        return text.isEmpty ? nil : text
     }
 
     private static func mapHTTPError(status: Int, headers: HTTPURLResponse, body: Data) -> TranscriptionError {
