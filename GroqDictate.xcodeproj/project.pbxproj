@@ -1,0 +1,388 @@
+// !$*UTF8*$!
+{
+	archiveVersion = 1;
+	classes = {
+	};
+	objectVersion = 77;
+	objects = {
+
+/* Begin PBXBuildFile section */
+		052638DD34D768594E2FCBC7 /* FocusTracker.swift in Sources */ = {isa = PBXBuildFile; fileRef = FA1486D8921DABF861D36301 /* FocusTracker.swift */; };
+		0D4E6E9756123D2F454804EF /* AppConstants.swift in Sources */ = {isa = PBXBuildFile; fileRef = F06DBCC30E9F864A7CBAF146 /* AppConstants.swift */; };
+		156BC8B1DC12AC8425F95585 /* AudioRecorder.swift in Sources */ = {isa = PBXBuildFile; fileRef = 353B790FCD5D726C3BE81822 /* AudioRecorder.swift */; };
+		1F8051CBD1A7B17DEEFFE9C5 /* FloatingPanel.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8FF9DB77E84DAB948C897224 /* FloatingPanel.swift */; };
+		27D916FCF172DA40533592EB /* AppLog.swift in Sources */ = {isa = PBXBuildFile; fileRef = ECA808B7D1F99932D7A1D06E /* AppLog.swift */; };
+		3284F9A80F4E7D9A41A68141 /* KeychainHelper.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8BF83D48846C82B2117C8E28 /* KeychainHelper.swift */; };
+		35308FA56C73651DE8138848 /* HotkeyMonitor.swift in Sources */ = {isa = PBXBuildFile; fileRef = 985FE6CA57E573D06BA367F7 /* HotkeyMonitor.swift */; };
+		605FB988472C2B769FC41A8C /* PasteTargetInspector.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6B0BE28EBDAD867F920D1D48 /* PasteTargetInspector.swift */; };
+		6E385F86CFC602FE270FC2A6 /* GroqAPI.swift in Sources */ = {isa = PBXBuildFile; fileRef = 418C95F8E57DAB14496A3BE0 /* GroqAPI.swift */; };
+		90D15C543DC56CC75F2DB9FF /* SetupWindow.swift in Sources */ = {isa = PBXBuildFile; fileRef = 00DE7481DB590DF65091BA6E /* SetupWindow.swift */; };
+		CCF0C9CA70F08E9C93653280 /* Config.swift in Sources */ = {isa = PBXBuildFile; fileRef = 847D12320F149726245D2221 /* Config.swift */; };
+		D3A988FE131D2292FCC3EC8B /* main.swift in Sources */ = {isa = PBXBuildFile; fileRef = 05DB0DE76801ADB10FD9D67C /* main.swift */; };
+		DACE024458013D9CA8EC4894 /* AboutDialog.swift in Sources */ = {isa = PBXBuildFile; fileRef = 98175286F0C06E36428CBACC /* AboutDialog.swift */; };
+		DB2158EA3753554308C7ED13 /* AppStrings.swift in Sources */ = {isa = PBXBuildFile; fileRef = 946C9865B161C71D4E3DC512 /* AppStrings.swift */; };
+/* End PBXBuildFile section */
+
+/* Begin PBXFileReference section */
+		0067FE2374BD2B119ABBC956 /* GroqDictate.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = GroqDictate.app; sourceTree = BUILT_PRODUCTS_DIR; };
+		00DE7481DB590DF65091BA6E /* SetupWindow.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SetupWindow.swift; sourceTree = "<group>"; };
+		05DB0DE76801ADB10FD9D67C /* main.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = main.swift; sourceTree = "<group>"; };
+		353B790FCD5D726C3BE81822 /* AudioRecorder.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AudioRecorder.swift; sourceTree = "<group>"; };
+		418C95F8E57DAB14496A3BE0 /* GroqAPI.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GroqAPI.swift; sourceTree = "<group>"; };
+		6B0BE28EBDAD867F920D1D48 /* PasteTargetInspector.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PasteTargetInspector.swift; sourceTree = "<group>"; };
+		847D12320F149726245D2221 /* Config.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Config.swift; sourceTree = "<group>"; };
+		8BF83D48846C82B2117C8E28 /* KeychainHelper.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = KeychainHelper.swift; sourceTree = "<group>"; };
+		8FF9DB77E84DAB948C897224 /* FloatingPanel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FloatingPanel.swift; sourceTree = "<group>"; };
+		946C9865B161C71D4E3DC512 /* AppStrings.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppStrings.swift; sourceTree = "<group>"; };
+		98175286F0C06E36428CBACC /* AboutDialog.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AboutDialog.swift; sourceTree = "<group>"; };
+		985FE6CA57E573D06BA367F7 /* HotkeyMonitor.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HotkeyMonitor.swift; sourceTree = "<group>"; };
+		ECA808B7D1F99932D7A1D06E /* AppLog.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppLog.swift; sourceTree = "<group>"; };
+		F06DBCC30E9F864A7CBAF146 /* AppConstants.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppConstants.swift; sourceTree = "<group>"; };
+		FA1486D8921DABF861D36301 /* FocusTracker.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FocusTracker.swift; sourceTree = "<group>"; };
+/* End PBXFileReference section */
+
+/* Begin PBXGroup section */
+		1CBA797D7D48261ECB75AFA2 /* Core */ = {
+			isa = PBXGroup;
+			children = (
+				F06DBCC30E9F864A7CBAF146 /* AppConstants.swift */,
+				ECA808B7D1F99932D7A1D06E /* AppLog.swift */,
+				946C9865B161C71D4E3DC512 /* AppStrings.swift */,
+				847D12320F149726245D2221 /* Config.swift */,
+				8BF83D48846C82B2117C8E28 /* KeychainHelper.swift */,
+			);
+			path = Core;
+			sourceTree = "<group>";
+		};
+		2B2DBA571D15F6BFF29D7785 /* Sources */ = {
+			isa = PBXGroup;
+			children = (
+				4ADE6A9C92E113EEC088BAAB /* App */,
+				1CBA797D7D48261ECB75AFA2 /* Core */,
+				4BD590293CEB144AB1ACC54A /* Services */,
+				D60774762BA3728FDD37DB7E /* UI */,
+			);
+			path = Sources;
+			sourceTree = "<group>";
+		};
+		3D8CFCF8673B55DB69F2DFA9 = {
+			isa = PBXGroup;
+			children = (
+				2B2DBA571D15F6BFF29D7785 /* Sources */,
+				9E45049285238FE6D08211C7 /* Products */,
+			);
+			sourceTree = "<group>";
+		};
+		4ADE6A9C92E113EEC088BAAB /* App */ = {
+			isa = PBXGroup;
+			children = (
+				05DB0DE76801ADB10FD9D67C /* main.swift */,
+			);
+			path = App;
+			sourceTree = "<group>";
+		};
+		4BD590293CEB144AB1ACC54A /* Services */ = {
+			isa = PBXGroup;
+			children = (
+				353B790FCD5D726C3BE81822 /* AudioRecorder.swift */,
+				FA1486D8921DABF861D36301 /* FocusTracker.swift */,
+				418C95F8E57DAB14496A3BE0 /* GroqAPI.swift */,
+				985FE6CA57E573D06BA367F7 /* HotkeyMonitor.swift */,
+				6B0BE28EBDAD867F920D1D48 /* PasteTargetInspector.swift */,
+			);
+			path = Services;
+			sourceTree = "<group>";
+		};
+		9E45049285238FE6D08211C7 /* Products */ = {
+			isa = PBXGroup;
+			children = (
+				0067FE2374BD2B119ABBC956 /* GroqDictate.app */,
+			);
+			name = Products;
+			sourceTree = "<group>";
+		};
+		D60774762BA3728FDD37DB7E /* UI */ = {
+			isa = PBXGroup;
+			children = (
+				98175286F0C06E36428CBACC /* AboutDialog.swift */,
+				8FF9DB77E84DAB948C897224 /* FloatingPanel.swift */,
+				00DE7481DB590DF65091BA6E /* SetupWindow.swift */,
+			);
+			path = UI;
+			sourceTree = "<group>";
+		};
+/* End PBXGroup section */
+
+/* Begin PBXNativeTarget section */
+		30D973287298264283F07674 /* GroqDictate */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = 5B2C97BDD1FDC959C3B83585 /* Build configuration list for PBXNativeTarget "GroqDictate" */;
+			buildPhases = (
+				57FFD95A1A3DA603CE89D507 /* Sources */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+			);
+			name = GroqDictate;
+			packageProductDependencies = (
+			);
+			productName = GroqDictate;
+			productReference = 0067FE2374BD2B119ABBC956 /* GroqDictate.app */;
+			productType = "com.apple.product-type.application";
+		};
+/* End PBXNativeTarget section */
+
+/* Begin PBXProject section */
+		85B79A8AFFB09D30539D6AC0 /* Project object */ = {
+			isa = PBXProject;
+			attributes = {
+				BuildIndependentTargetsInParallel = YES;
+				LastUpgradeCheck = 1600;
+				TargetAttributes = {
+					30D973287298264283F07674 = {
+						DevelopmentTeam = G729H95F8U;
+						ProvisioningStyle = Automatic;
+					};
+				};
+			};
+			buildConfigurationList = C764A94DA76D0DDB1660CFF8 /* Build configuration list for PBXProject "GroqDictate" */;
+			compatibilityVersion = "Xcode 14.0";
+			developmentRegion = en;
+			hasScannedForEncodings = 0;
+			knownRegions = (
+				Base,
+				en,
+			);
+			mainGroup = 3D8CFCF8673B55DB69F2DFA9;
+			minimizedProjectReferenceProxies = 1;
+			preferredProjectObjectVersion = 77;
+			projectDirPath = "";
+			projectRoot = "";
+			targets = (
+				30D973287298264283F07674 /* GroqDictate */,
+			);
+		};
+/* End PBXProject section */
+
+/* Begin PBXSourcesBuildPhase section */
+		57FFD95A1A3DA603CE89D507 /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				DACE024458013D9CA8EC4894 /* AboutDialog.swift in Sources */,
+				0D4E6E9756123D2F454804EF /* AppConstants.swift in Sources */,
+				27D916FCF172DA40533592EB /* AppLog.swift in Sources */,
+				DB2158EA3753554308C7ED13 /* AppStrings.swift in Sources */,
+				156BC8B1DC12AC8425F95585 /* AudioRecorder.swift in Sources */,
+				CCF0C9CA70F08E9C93653280 /* Config.swift in Sources */,
+				1F8051CBD1A7B17DEEFFE9C5 /* FloatingPanel.swift in Sources */,
+				052638DD34D768594E2FCBC7 /* FocusTracker.swift in Sources */,
+				6E385F86CFC602FE270FC2A6 /* GroqAPI.swift in Sources */,
+				35308FA56C73651DE8138848 /* HotkeyMonitor.swift in Sources */,
+				3284F9A80F4E7D9A41A68141 /* KeychainHelper.swift in Sources */,
+				605FB988472C2B769FC41A8C /* PasteTargetInspector.swift in Sources */,
+				90D15C543DC56CC75F2DB9FF /* SetupWindow.swift in Sources */,
+				D3A988FE131D2292FCC3EC8B /* main.swift in Sources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXSourcesBuildPhase section */
+
+/* Begin XCBuildConfiguration section */
+		16BD69C4CEDF8216BD4D6082 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ALWAYS_SEARCH_USER_PATHS = NO;
+				CLANG_ANALYZER_NONNULL = YES;
+				CLANG_ANALYZER_NUMBER_OBJECT_CONVERSION = YES_AGGRESSIVE;
+				CLANG_CXX_LANGUAGE_STANDARD = "gnu++14";
+				CLANG_CXX_LIBRARY = "libc++";
+				CLANG_ENABLE_MODULES = YES;
+				CLANG_ENABLE_OBJC_ARC = YES;
+				CLANG_ENABLE_OBJC_WEAK = YES;
+				CLANG_WARN_BLOCK_CAPTURE_AUTORELEASING = YES;
+				CLANG_WARN_BOOL_CONVERSION = YES;
+				CLANG_WARN_COMMA = YES;
+				CLANG_WARN_CONSTANT_CONVERSION = YES;
+				CLANG_WARN_DEPRECATED_OBJC_IMPLEMENTATIONS = YES;
+				CLANG_WARN_DIRECT_OBJC_ISA_USAGE = YES_ERROR;
+				CLANG_WARN_DOCUMENTATION_COMMENTS = YES;
+				CLANG_WARN_EMPTY_BODY = YES;
+				CLANG_WARN_ENUM_CONVERSION = YES;
+				CLANG_WARN_INFINITE_RECURSION = YES;
+				CLANG_WARN_INT_CONVERSION = YES;
+				CLANG_WARN_NON_LITERAL_NULL_CONVERSION = YES;
+				CLANG_WARN_OBJC_IMPLICIT_RETAIN_SELF = YES;
+				CLANG_WARN_OBJC_LITERAL_CONVERSION = YES;
+				CLANG_WARN_OBJC_ROOT_CLASS = YES_ERROR;
+				CLANG_WARN_QUOTED_INCLUDE_IN_FRAMEWORK_HEADER = YES;
+				CLANG_WARN_RANGE_LOOP_ANALYSIS = YES;
+				CLANG_WARN_STRICT_PROTOTYPES = YES;
+				CLANG_WARN_SUSPICIOUS_MOVE = YES;
+				CLANG_WARN_UNGUARDED_AVAILABILITY = YES_AGGRESSIVE;
+				CLANG_WARN_UNREACHABLE_CODE = YES;
+				CLANG_WARN__DUPLICATE_METHOD_MATCH = YES;
+				COPY_PHASE_STRIP = NO;
+				DEBUG_INFORMATION_FORMAT = dwarf;
+				ENABLE_STRICT_OBJC_MSGSEND = YES;
+				ENABLE_TESTABILITY = YES;
+				GCC_C_LANGUAGE_STANDARD = gnu11;
+				GCC_DYNAMIC_NO_PIC = NO;
+				GCC_NO_COMMON_BLOCKS = YES;
+				GCC_OPTIMIZATION_LEVEL = 0;
+				GCC_PREPROCESSOR_DEFINITIONS = (
+					"$(inherited)",
+					"DEBUG=1",
+				);
+				GCC_WARN_64_TO_32_BIT_CONVERSION = YES;
+				GCC_WARN_ABOUT_RETURN_TYPE = YES_ERROR;
+				GCC_WARN_UNDECLARED_SELECTOR = YES;
+				GCC_WARN_UNINITIALIZED_AUTOS = YES_AGGRESSIVE;
+				GCC_WARN_UNUSED_FUNCTION = YES;
+				GCC_WARN_UNUSED_VARIABLE = YES;
+				MACOSX_DEPLOYMENT_TARGET = 15.0;
+				MTL_ENABLE_DEBUG_INFO = INCLUDE_SOURCE;
+				MTL_FAST_MATH = YES;
+				ONLY_ACTIVE_ARCH = YES;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SDKROOT = macosx;
+				SWIFT_ACTIVE_COMPILATION_CONDITIONS = DEBUG;
+				SWIFT_OPTIMIZATION_LEVEL = "-Onone";
+				SWIFT_VERSION = 5.9;
+			};
+			name = Debug;
+		};
+		62F5F835A382EB4B1FE807B5 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ALWAYS_SEARCH_USER_PATHS = NO;
+				CLANG_ANALYZER_NONNULL = YES;
+				CLANG_ANALYZER_NUMBER_OBJECT_CONVERSION = YES_AGGRESSIVE;
+				CLANG_CXX_LANGUAGE_STANDARD = "gnu++14";
+				CLANG_CXX_LIBRARY = "libc++";
+				CLANG_ENABLE_MODULES = YES;
+				CLANG_ENABLE_OBJC_ARC = YES;
+				CLANG_ENABLE_OBJC_WEAK = YES;
+				CLANG_WARN_BLOCK_CAPTURE_AUTORELEASING = YES;
+				CLANG_WARN_BOOL_CONVERSION = YES;
+				CLANG_WARN_COMMA = YES;
+				CLANG_WARN_CONSTANT_CONVERSION = YES;
+				CLANG_WARN_DEPRECATED_OBJC_IMPLEMENTATIONS = YES;
+				CLANG_WARN_DIRECT_OBJC_ISA_USAGE = YES_ERROR;
+				CLANG_WARN_DOCUMENTATION_COMMENTS = YES;
+				CLANG_WARN_EMPTY_BODY = YES;
+				CLANG_WARN_ENUM_CONVERSION = YES;
+				CLANG_WARN_INFINITE_RECURSION = YES;
+				CLANG_WARN_INT_CONVERSION = YES;
+				CLANG_WARN_NON_LITERAL_NULL_CONVERSION = YES;
+				CLANG_WARN_OBJC_IMPLICIT_RETAIN_SELF = YES;
+				CLANG_WARN_OBJC_LITERAL_CONVERSION = YES;
+				CLANG_WARN_OBJC_ROOT_CLASS = YES_ERROR;
+				CLANG_WARN_QUOTED_INCLUDE_IN_FRAMEWORK_HEADER = YES;
+				CLANG_WARN_RANGE_LOOP_ANALYSIS = YES;
+				CLANG_WARN_STRICT_PROTOTYPES = YES;
+				CLANG_WARN_SUSPICIOUS_MOVE = YES;
+				CLANG_WARN_UNGUARDED_AVAILABILITY = YES_AGGRESSIVE;
+				CLANG_WARN_UNREACHABLE_CODE = YES;
+				CLANG_WARN__DUPLICATE_METHOD_MATCH = YES;
+				COPY_PHASE_STRIP = NO;
+				DEBUG_INFORMATION_FORMAT = "dwarf-with-dsym";
+				ENABLE_NS_ASSERTIONS = NO;
+				ENABLE_STRICT_OBJC_MSGSEND = YES;
+				GCC_C_LANGUAGE_STANDARD = gnu11;
+				GCC_NO_COMMON_BLOCKS = YES;
+				GCC_WARN_64_TO_32_BIT_CONVERSION = YES;
+				GCC_WARN_ABOUT_RETURN_TYPE = YES_ERROR;
+				GCC_WARN_UNDECLARED_SELECTOR = YES;
+				GCC_WARN_UNINITIALIZED_AUTOS = YES_AGGRESSIVE;
+				GCC_WARN_UNUSED_FUNCTION = YES;
+				GCC_WARN_UNUSED_VARIABLE = YES;
+				MACOSX_DEPLOYMENT_TARGET = 15.0;
+				MTL_ENABLE_DEBUG_INFO = NO;
+				MTL_FAST_MATH = YES;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SDKROOT = macosx;
+				SWIFT_COMPILATION_MODE = wholemodule;
+				SWIFT_OPTIMIZATION_LEVEL = "-O";
+				SWIFT_VERSION = 5.9;
+			};
+			name = Release;
+		};
+		9DE1FE4A8DDC5164186AA65C /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
+				CODE_SIGN_ENTITLEMENTS = GroqDictate/GroqDictate.entitlements;
+				CODE_SIGN_STYLE = Automatic;
+				COMBINE_HIDPI_IMAGES = YES;
+				CURRENT_PROJECT_VERSION = 1;
+				DEVELOPMENT_TEAM = G729H95F8U;
+				GENERATE_INFOPLIST_FILE = NO;
+				INFOPLIST_FILE = GroqDictate/Info.plist;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/../Frameworks",
+				);
+				MARKETING_VERSION = 1.0.0;
+				OTHER_LDFLAGS = (
+					"-Xlinker",
+					"-dead_strip",
+				);
+				PRODUCT_BUNDLE_IDENTIFIER = com.groqdictate;
+				SDKROOT = macosx;
+				"SWIFT_OPTIMIZATION_LEVEL[config=Release]" = "-Osize";
+			};
+			name = Release;
+		};
+		BC251FAD7271E55876145097 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
+				CODE_SIGN_ENTITLEMENTS = GroqDictate/GroqDictate.entitlements;
+				CODE_SIGN_STYLE = Automatic;
+				COMBINE_HIDPI_IMAGES = YES;
+				CURRENT_PROJECT_VERSION = 1;
+				DEVELOPMENT_TEAM = G729H95F8U;
+				GENERATE_INFOPLIST_FILE = NO;
+				INFOPLIST_FILE = GroqDictate/Info.plist;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/../Frameworks",
+				);
+				MARKETING_VERSION = 1.0.0;
+				OTHER_LDFLAGS = (
+					"-Xlinker",
+					"-dead_strip",
+				);
+				PRODUCT_BUNDLE_IDENTIFIER = com.groqdictate;
+				SDKROOT = macosx;
+				"SWIFT_OPTIMIZATION_LEVEL[config=Release]" = "-Osize";
+			};
+			name = Debug;
+		};
+/* End XCBuildConfiguration section */
+
+/* Begin XCConfigurationList section */
+		5B2C97BDD1FDC959C3B83585 /* Build configuration list for PBXNativeTarget "GroqDictate" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				BC251FAD7271E55876145097 /* Debug */,
+				9DE1FE4A8DDC5164186AA65C /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Debug;
+		};
+		C764A94DA76D0DDB1660CFF8 /* Build configuration list for PBXProject "GroqDictate" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				16BD69C4CEDF8216BD4D6082 /* Debug */,
+				62F5F835A382EB4B1FE807B5 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Debug;
+		};
+/* End XCConfigurationList section */
+	};
+	rootObject = 85B79A8AFFB09D30539D6AC0 /* Project object */;
+}
