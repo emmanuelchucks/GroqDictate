@@ -1,68 +1,72 @@
 .POSIX:
 SHELL := /bin/bash
 
-APP_NAME        = GroqDictate
-SCHEME          = $(APP_NAME)
-PROJECT         = $(APP_NAME).xcodeproj
-BUNDLE_ID       = com.groqdictate
-INSTALL_PATH   ?= /Applications/$(APP_NAME).app
+# Paths
+APP_PATH         ?= /Applications/GroqDictate.app
+APP_EXECUTABLE    = $(APP_PATH)/Contents/MacOS/GroqDictate
+BUILD_EXECUTABLE  = .build/release/GroqDictate
+BUNDLE_ID        ?= com.groqdictate
+KEYCHAIN_SERVICE ?= com.groqdictate
+KEYCHAIN_ACCOUNT ?= groq-api-key
+CODESIGN_IDENTITY ?=
 
-KEYCHAIN_SERVICE = com.groqdictate
-KEYCHAIN_ACCOUNT = groq-api-key
-
-LAUNCH_AGENT_LABEL = com.groqdictate
-LAUNCH_AGENT_PATH  = $(HOME)/Library/LaunchAgents/com.groqdictate.plist
-DEBUG_LOG_DIR      = $(HOME)/Library/Logs/GroqDictate
-DEBUG_STDOUT_PATH  = $(DEBUG_LOG_DIR)/stdout.log
-DEBUG_STDERR_PATH  = $(DEBUG_LOG_DIR)/stderr.log
-
-# Resolve built .app from DerivedData
-BUILD_DIR = $(shell xcodebuild -project $(PROJECT) -scheme $(SCHEME) -configuration Release -showBuildSettings 2>/dev/null | awk '/^ *BUILT_PRODUCTS_DIR/ { print $$NF }')
-BUILD_APP = $(BUILD_DIR)/$(APP_NAME).app
-
-.PHONY: generate build install run run-debug clean \
-        clean-state reset-and-run \
-        boot-debug-enable boot-debug-disable boot-debug-status help
-
-# ── Generate xcodeproj from project.yml ───────────────
-generate:
-	xcodegen generate
+# LaunchAgent / debug logging
+LAUNCH_AGENT_LABEL ?= com.groqdictate
+LAUNCH_AGENT_PATH  ?= $(HOME)/Library/LaunchAgents/com.groqdictate.plist
+DEBUG_LOG_DIR      ?= $(HOME)/Library/Logs/GroqDictate
+DEBUG_STDOUT_PATH  ?= $(DEBUG_LOG_DIR)/stdout.log
+DEBUG_STDERR_PATH  ?= $(DEBUG_LOG_DIR)/stderr.log
 
 # ── Build ─────────────────────────────────────────────
-build:
-	xcodebuild -project $(PROJECT) -scheme $(SCHEME) -configuration Release build
+.PHONY: build install run rebuild clean-state reset-and-run \
+        boot-debug-enable boot-debug-disable boot-debug-status help
 
-# ── Install into /Applications ────────────────────────
+build:
+	swift build -c release
+	@test -f "$(BUILD_EXECUTABLE)" || { echo "❌ Build output not found"; exit 1; }
+	@echo "✅ Build complete"
+
+# ── Install ───────────────────────────────────────────
 install: build
-	-@pkill -x $(APP_NAME) 2>/dev/null; sleep 0.3
-	rm -rf "$(INSTALL_PATH)"
-	cp -R "$(BUILD_APP)" "$(INSTALL_PATH)"
-	@echo "✅ Installed to $(INSTALL_PATH)"
+	@test -d "$(APP_PATH)" || { echo "❌ App bundle not found: $(APP_PATH)"; exit 1; }
+	-@pkill -x GroqDictate 2>/dev/null; sleep 0.3
+	install -m 755 "$(BUILD_EXECUTABLE)" "$(APP_EXECUTABLE)"
+	@if [ -n "$(CODESIGN_IDENTITY)" ]; then \
+		echo "→ Signing with: $(CODESIGN_IDENTITY)"; \
+		codesign -s "$(CODESIGN_IDENTITY)" -f --deep "$(APP_PATH)"; \
+	fi
+	@echo "✅ Install complete"
 
 # ── Run ───────────────────────────────────────────────
 run:
-	@test -x "$(INSTALL_PATH)/Contents/MacOS/$(APP_NAME)" || { echo "❌ Not installed. Run: make install"; exit 1; }
-	-@pkill -x $(APP_NAME) 2>/dev/null; sleep 0.3
-	open "$(INSTALL_PATH)"
+	@test -x "$(APP_EXECUTABLE)" || { echo "❌ Executable not found: $(APP_EXECUTABLE)"; exit 1; }
+	-@pkill -x GroqDictate 2>/dev/null; sleep 0.3
+	$(APP_EXECUTABLE)
 
 run-debug:
-	@test -x "$(INSTALL_PATH)/Contents/MacOS/$(APP_NAME)" || { echo "❌ Not installed. Run: make install"; exit 1; }
-	-@pkill -x $(APP_NAME) 2>/dev/null; sleep 0.3
-	GROQDICTATE_DEBUG=1 "$(INSTALL_PATH)/Contents/MacOS/$(APP_NAME)"
+	@test -x "$(APP_EXECUTABLE)" || { echo "❌ Executable not found: $(APP_EXECUTABLE)"; exit 1; }
+	-@pkill -x GroqDictate 2>/dev/null; sleep 0.3
+	GROQDICTATE_DEBUG=1 $(APP_EXECUTABLE)
 
+run-build:
+	@test -x "$(BUILD_EXECUTABLE)" || { echo "❌ Executable not found: $(BUILD_EXECUTABLE)"; exit 1; }
+	-@pkill -x GroqDictate 2>/dev/null; sleep 0.3
+	$(BUILD_EXECUTABLE)
+
+run-build-debug:
+	@test -x "$(BUILD_EXECUTABLE)" || { echo "❌ Executable not found: $(BUILD_EXECUTABLE)"; exit 1; }
+	-@pkill -x GroqDictate 2>/dev/null; sleep 0.3
+	GROQDICTATE_DEBUG=1 $(BUILD_EXECUTABLE)
+
+# ── Compound targets ─────────────────────────────────
 rebuild: install run
 
 rebuild-debug: install run-debug
 
-# ── Clean ─────────────────────────────────────────────
-clean:
-	xcodebuild -project $(PROJECT) -scheme $(SCHEME) clean
-	rm -rf DerivedData
-
 # ── Clean state (destructive — requires FORCE=1) ─────
 clean-state:
 	@test "$(FORCE)" = "1" || { echo "❌ Destructive. Run with FORCE=1"; exit 1; }
-	-@pkill -x $(APP_NAME) 2>/dev/null; sleep 0.3
+	-@pkill -x GroqDictate 2>/dev/null; sleep 0.3
 	-security delete-generic-password -s "$(KEYCHAIN_SERVICE)" -a "$(KEYCHAIN_ACCOUNT)" 2>/dev/null
 	-defaults delete "$(BUNDLE_ID)" 2>/dev/null
 	rm -rf "$(HOME)/Library/Caches/$(BUNDLE_ID)" \
@@ -81,7 +85,7 @@ reset-and-run: clean-state rebuild
 boot-debug-status:
 	@test -f "$(LAUNCH_AGENT_PATH)" || { echo "❌ LaunchAgent not found: $(LAUNCH_AGENT_PATH)"; exit 1; }
 	@python3 -c "\
-	import plistlib; \
+	import plistlib, sys; \
 	plist = plistlib.load(open('$(LAUNCH_AGENT_PATH)', 'rb')); \
 	env = plist.get('EnvironmentVariables', {}) or {}; \
 	print(f'LaunchAgent: $(LAUNCH_AGENT_PATH)'); \
@@ -138,14 +142,14 @@ help:
 	@echo "Usage: make <target> [VAR=value ...]"
 	@echo ""
 	@echo "Targets:"
-	@echo "  generate             Regenerate xcodeproj from project.yml"
-	@echo "  build                Build release via xcodebuild"
-	@echo "  install              Build + copy .app to /Applications"
-	@echo "  run                  Launch installed app"
-	@echo "  run-debug            Run with GROQDICTATE_DEBUG=1"
+	@echo "  build                Build release binary"
+	@echo "  install              Build + copy into app bundle"
+	@echo "  run                  Run installed app"
+	@echo "  run-debug            Run installed app with GROQDICTATE_DEBUG=1"
+	@echo "  run-build            Run .build binary directly"
+	@echo "  run-build-debug      Run .build binary with GROQDICTATE_DEBUG=1"
 	@echo "  rebuild              Build + install + run"
 	@echo "  rebuild-debug        Build + install + run with debug"
-	@echo "  clean                Clean build artifacts"
 	@echo "  clean-state          Reset keychain/defaults/cache/tcc (needs FORCE=1)"
 	@echo "  reset-and-run        clean-state + rebuild (needs FORCE=1)"
 	@echo "  boot-debug-status    Show LaunchAgent debug config"
@@ -153,5 +157,6 @@ help:
 	@echo "  boot-debug-disable   Disable persistent debug logging"
 	@echo ""
 	@echo "Variables:"
-	@echo "  INSTALL_PATH         Install location (default: /Applications/GroqDictate.app)"
+	@echo "  APP_PATH             App bundle path (default: /Applications/GroqDictate.app)"
+	@echo "  CODESIGN_IDENTITY    Codesign identity for install"
 	@echo "  FORCE=1              Required for clean-state/reset-and-run"

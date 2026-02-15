@@ -1,6 +1,7 @@
 import AudioToolbox
 import CoreAudio
 import Foundation
+import os
 
 struct AudioDevice {
     let uid: String
@@ -9,9 +10,21 @@ struct AudioDevice {
 }
 
 final class AudioRecorder {
-    var inputGain: Float = 5.0
+    var inputGain: Float {
+        get { _inputGain.withLock { $0 } }
+        set { _inputGain.withLock { $0 = newValue } }
+    }
     var selectedDeviceUID: String?
     private(set) var isRecording = false
+    private let _inputGain = OSAllocatedUnfairLock(initialState: Float(5.0))
+
+    deinit {
+        if let queue = audioQueue {
+            AudioQueueStop(queue, true)
+            AudioQueueDispose(queue, true)
+        }
+        try? fileHandle?.close()
+    }
 
     var currentLevel: Float {
         levelLock.lock()
@@ -55,7 +68,7 @@ final class AudioRecorder {
         writeWAVHeader(dataSize: 0)
 
         var format = Self.monoInt16Format()
-        let pointer = UnsafeMutableRawPointer(Unmanaged.passUnretained(self).toOpaque())
+        let pointer = UnsafeMutableRawPointer(Unmanaged.passRetained(self).toOpaque())
 
         var queue: AudioQueueRef?
         try osCheck(AudioQueueNewInput(&format, Self.inputCallback, pointer, nil, nil, 0, &queue))
@@ -76,6 +89,7 @@ final class AudioRecorder {
             AudioQueueDispose(queue, true)
             audioQueue = nil
             buffers.removeAll()
+            Unmanaged.passUnretained(self).release()
         }
 
         finalizeWAVHeader()
@@ -343,7 +357,7 @@ final class AudioRecorder {
             try osCheck(AudioQueueAllocateBuffer(queue, Self.bufferSize, &buffer))
             guard let buffer else { continue }
             buffers.append(buffer)
-            AudioQueueEnqueueBuffer(queue, buffer, 0, nil)
+            try osCheck(AudioQueueEnqueueBuffer(queue, buffer, 0, nil))
         }
     }
 

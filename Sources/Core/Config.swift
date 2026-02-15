@@ -18,7 +18,7 @@ struct Config {
     }
 
     enum DefaultValue {
-        static let model = "whisper-large-v3-turbo"
+        static let model = "whisper-large-v3"
         static let language = "en"
         static let inputGain: Float = 5.0
     }
@@ -29,9 +29,9 @@ struct Config {
     }
 
     static let modelOptions: [ModelOption] = [
-        ModelOption(id: "distil-whisper-large-v3-en", title: "Distil Whisper V3 (English, fastest)"),
-        ModelOption(id: "whisper-large-v3-turbo", title: "Whisper Large V3 Turbo (fast)"),
-        ModelOption(id: "whisper-large-v3", title: "Whisper Large V3 (most accurate)")
+        ModelOption(id: "whisper-large-v3", title: "Whisper Large V3 (most accurate)"),
+        ModelOption(id: "whisper-large-v3-turbo", title: "Whisper Large V3 Turbo"),
+        ModelOption(id: "distil-whisper-large-v3-en", title: "Distil Whisper V3")
     ]
 
     static func load() -> Config? {
