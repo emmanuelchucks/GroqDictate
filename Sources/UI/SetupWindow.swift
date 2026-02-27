@@ -5,7 +5,6 @@ final class SetupWindow: NSWindow, NSWindowDelegate {
 
     private let apiKeyField = NSSecureTextField()
     private let micPopup = NSPopUpButton()
-    private let modelPopup = NSPopUpButton()
     private let gainSlider = NSSlider()
     private let gainLabel = NSTextField(labelWithString: "5.0x")
     private let statusLabel = NSTextField(labelWithString: "")
@@ -17,7 +16,7 @@ final class SetupWindow: NSWindow, NSWindowDelegate {
 
     init() {
         super.init(
-            contentRect: NSRect(x: 0, y: 0, width: 460, height: 360),
+            contentRect: NSRect(x: 0, y: 0, width: 460, height: 320),
             styleMask: [.titled, .closable],
             backing: .buffered,
             defer: false
@@ -35,16 +34,16 @@ final class SetupWindow: NSWindow, NSWindowDelegate {
     }
 
     private func buildUI() {
-        let container = NSView(frame: NSRect(x: 0, y: 0, width: 460, height: 360))
+        let container = NSView(frame: NSRect(x: 0, y: 0, width: 460, height: 320))
         contentView = container
 
-        var y: CGFloat = 320
+        var y: CGFloat = 280
 
         addLabel(AppStrings.Setup.apiKeyLabel, at: &y, in: container, bold: true)
         y -= 4
         apiKeyField.frame = NSRect(x: 24, y: y, width: 412, height: 22)
         apiKeyField.font = .monospacedSystemFont(ofSize: 12, weight: .regular)
-        apiKeyField.placeholderString = "gsk_..."
+        apiKeyField.placeholderString = "sk-..."
         apiKeyField.usesSingleLineMode = true
         apiKeyField.lineBreakMode = .byTruncatingTail
         apiKeyField.cell?.wraps = false
@@ -61,18 +60,6 @@ final class SetupWindow: NSWindow, NSWindowDelegate {
         hint.frame = NSRect(x: 24, y: y, width: 412, height: 14)
         container.addSubview(hint)
         y -= 28
-
-        addLabel(AppStrings.Setup.modelLabel, at: &y, in: container, bold: true)
-        y -= 4
-        modelPopup.frame = NSRect(x: 24, y: y, width: 412, height: 26)
-        let savedModel = UserDefaults.standard.string(forKey: Config.DefaultsKey.model) ?? Config.DefaultValue.model
-        for (index, model) in Config.modelOptions.enumerated() {
-            modelPopup.addItem(withTitle: model.title)
-            modelPopup.item(at: index)?.representedObject = model.id
-            if model.id == savedModel { modelPopup.selectItem(at: index) }
-        }
-        container.addSubview(modelPopup)
-        y -= 34
 
         addLabel(AppStrings.Setup.micLabel, at: &y, in: container, bold: true)
         y -= 4
@@ -144,10 +131,6 @@ final class SetupWindow: NSWindow, NSWindowDelegate {
             showStatus(AppStrings.Setup.keyEmpty, isError: true)
             return
         }
-        guard key.hasPrefix("gsk_") else {
-            showStatus(AppStrings.Setup.keyInvalid, isError: true)
-            return
-        }
 
         do {
             try Config.saveAPIKey(key)
@@ -156,9 +139,8 @@ final class SetupWindow: NSWindow, NSWindowDelegate {
             return
         }
 
-        let selectedModel = (modelPopup.selectedItem?.representedObject as? String) ?? Config.DefaultValue.model
         let selectedMicUID = (micPopup.selectedItem?.representedObject as? String).flatMap { $0 == Self.systemDefaultMicToken ? nil : $0 }
-        Config.savePreferences(model: selectedModel, micUID: selectedMicUID, inputGain: Float(gainSlider.doubleValue))
+        Config.savePreferences(micUID: selectedMicUID, inputGain: Float(gainSlider.doubleValue))
 
         didSave = true
         close()
