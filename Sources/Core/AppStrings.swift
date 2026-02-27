@@ -48,14 +48,16 @@ enum AppStrings {
 
     enum Setup {
         static let title = "GroqDictate Settings"
-        static let apiKeyLabel = "OpenAI API Key"
+        static let apiKeyLabel = "Groq API Key"
+        static let modelLabel = "Model"
         static let micLabel = "Microphone"
         static let inputGainLabel = "Input Gain"
-        static let keyHint = "From platform.openai.com → Stored in Keychain"
+        static let keyHint = "Free from console.groq.com → Stored in Keychain"
         static let done = "Done"
         static let systemDefaultMic = "System Default"
 
         static let keyEmpty = "API key cannot be empty."
+        static let keyInvalid = "Invalid key — should start with gsk_"
         static func keychainError(_ message: String) -> String { "Keychain error: \(message)" }
     }
 

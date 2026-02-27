@@ -2,13 +2,13 @@
 
 GroqDictate is a macOS menu bar dictation app.
 
-Press **Right ⌘** to start recording, press it again to stop, transcribe with **GPT-4o Transcribe**, and paste into the active app.
+Press **Right ⌘** to start recording, press it again to stop, transcribe with **Groq Whisper**, and paste into the active app.
 
 ## Requirements
 
 - macOS **14.0+**
 - Xcode **16+** (with Command Line Tools)
-- OpenAI API key (`sk-...`)
+- Groq API key (`gsk_...`)
 
 For release distribution (signing + notarization):
 - Paid Apple Developer account
@@ -80,7 +80,7 @@ make doctor
 ## First-time setup
 
 1. Launch the app.
-2. Open Settings and enter your OpenAI API key.
+2. Open Settings and enter your Groq API key.
 3. Grant Microphone permission.
 4. Grant Accessibility permission for more reliable global key handling.
 5. (Optional) Enable **Launch at Login** from the menu bar.

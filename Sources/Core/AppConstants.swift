@@ -2,8 +2,8 @@ import Foundation
 
 enum AppConstants {
     enum URLs {
-        static let transcriptionAPIHost = URL(string: "https://api.openai.com")!
-        static let transcriptions = URL(string: "https://api.openai.com/v1/audio/transcriptions")!
+        static let groqAPIHost = URL(string: "https://api.groq.com")!
+        static let groqTranscriptions = URL(string: "https://api.groq.com/openai/v1/audio/transcriptions")!
         static let microphonePrivacySettings = URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_Microphone")!
         static let projectGitHub = URL(string: "https://github.com/emmanuelchucks/GroqDictate")!
     }
@@ -15,6 +15,11 @@ enum AppConstants {
     enum TempFiles {
         static let wav = "groqdictate.wav"
         static let flac = "groqdictate.flac"
+    }
+
+    enum Transcription {
+        static let maxSegmentGapSeconds: Double = 8
+        static let minCompressionRatio: Double = 0.8
     }
 
     enum Diagnostics {

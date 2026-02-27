@@ -28,7 +28,7 @@ ENTITLEMENTS_FILE := GroqDictate/GroqDictate.entitlements
 DEVELOPER_ID_APP ?=
 NOTARY_PROFILE ?=
 KEYCHAIN_SERVICE ?= $(BUNDLE_ID)
-KEYCHAIN_ACCOUNT ?= openai-api-key
+KEYCHAIN_ACCOUNT ?= groq-api-key
 
 # Optional behavior flags
 RESET ?= 0

@@ -49,7 +49,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
         if Config.hasAPIKey {
             applyConfig()
-            TranscriptionAPI.warmConnection()
+            GroqAPI.warmConnection()
             requestPermissionsIfNeeded()
         } else {
             showSetup(isOnboarding: true)
@@ -399,8 +399,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     private func transcribe(fileURL: URL, config: Config) {
-        AppLog.debug("starting transcription file=\(fileURL.lastPathComponent)", category: .network)
-        TranscriptionAPI.transcribe(fileURL: fileURL, config: config) { [weak self] result in
+        AppLog.debug("starting transcription model=\(config.model) file=\(fileURL.lastPathComponent)", category: .network)
+        GroqAPI.transcribe(fileURL: fileURL, config: config) { [weak self] result in
             DispatchQueue.main.async {
                 guard let self else { return }
                 guard case .processing = self.state else { return }
@@ -460,11 +460,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         resetToIdle(reason: "error dismissed")
     }
 
-    private func showTranscriptionError(_ error: TranscriptionAPI.TranscriptionError) {
+    private func showTranscriptionError(_ error: GroqAPI.TranscriptionError) {
         let presentation: (kind: ErrorKind, message: String, action: WaveformView.ErrorAction)
 
         switch error {
-        case .rateLimited, .serverError, .timedOut, .emptyTranscription, .failedDependency:
+        case .rateLimited, .serverError, .timedOut, .emptyTranscription, .failedDependency, .capacityExceeded:
             presentation = (.retryable, error.errorDescription ?? AppStrings.Errors.tryAgain, .retry)
         case .tooLarge:
             presentation = (.tooLarge, error.errorDescription ?? AppStrings.Errors.recordingTooLarge, .newRecording)

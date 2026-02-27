@@ -1,8 +1,7 @@
 import Foundation
 
-enum TranscriptionAPI {
-    private static let baseURL = AppConstants.URLs.transcriptions
-    private static let model = "gpt-4o-transcribe"
+enum GroqAPI {
+    private static let baseURL = AppConstants.URLs.groqTranscriptions
     private static let maxFileSize = 25 * 1024 * 1024
     private static let requestTimeout: TimeInterval = 12
     private static let resourceTimeout: TimeInterval = 30
@@ -19,7 +18,7 @@ enum TranscriptionAPI {
     }()
 
     static func warmConnection() {
-        var request = URLRequest(url: AppConstants.URLs.transcriptionAPIHost)
+        var request = URLRequest(url: AppConstants.URLs.groqAPIHost)
         request.httpMethod = "HEAD"
         request.timeoutInterval = 5
         session.dataTask(with: request) { _, _, _ in }.resume()
@@ -81,9 +80,9 @@ enum TranscriptionAPI {
             body.append("\(value)\r\n")
         }
 
-        field("model", model)
+        field("model", config.model)
         field("language", config.language)
-        field("response_format", "json")
+        field("response_format", "verbose_json")
         field("temperature", "0")
 
         body.append("--\(boundary)\r\n")
@@ -206,16 +205,40 @@ enum TranscriptionAPI {
     }
 
     private static func extractTranscription(from data: Data) -> String? {
-        guard let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else {
+        guard
+            let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+            let segments = json["segments"] as? [[String: Any]]
+        else {
             return String(data: data, encoding: .utf8)?.trimmingCharacters(in: .whitespacesAndNewlines)
         }
 
-        if let text = json["text"] as? String {
-            let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
-            return trimmed.isEmpty ? nil : trimmed
-        }
+        var kept = 0
+        var dropped = 0
+        var lastEnd: Double = 0
 
-        return String(data: data, encoding: .utf8)?.trimmingCharacters(in: .whitespacesAndNewlines)
+        let text = segments.compactMap { segment -> String? in
+            let start = segment["start"] as? Double ?? 0
+            let end = segment["end"] as? Double ?? 0
+            let compressionRatio = segment["compression_ratio"] as? Double ?? 0
+            let gap = start - lastEnd
+
+            if gap > AppConstants.Transcription.maxSegmentGapSeconds && compressionRatio < AppConstants.Transcription.minCompressionRatio {
+                let preview = (segment["text"] as? String ?? "").prefix(40)
+                AppLog.debug(
+                    String(format: "segment dropped t=%.1f-%.1fs gap=%.1fs compress=%.2f text=%@", start, end, gap, compressionRatio, String(preview)),
+                    category: .network
+                )
+                dropped += 1
+                return nil
+            }
+
+            lastEnd = end
+            kept += 1
+            return segment["text"] as? String
+        }.joined().trimmingCharacters(in: .whitespacesAndNewlines)
+
+        AppLog.debug("segments kept=\(kept) dropped=\(dropped)", category: .network)
+        return text.isEmpty ? nil : text
     }
 
     private static func mapHTTPError(status: Int, headers: HTTPURLResponse, body: Data) -> TranscriptionError {
@@ -243,6 +266,8 @@ enum TranscriptionAPI {
         case 429:
             let retryAfter = headers.value(forHTTPHeaderField: "Retry-After").flatMap(Int.init) ?? 10
             return .rateLimited(retryAfter)
+        case 498:
+            return .capacityExceeded
         case 500, 502, 503:
             return .serverError
         default:
@@ -296,12 +321,13 @@ enum TranscriptionAPI {
         case notFound
         case unprocessable(String)
         case failedDependency(String)
+        case capacityExceeded
         case other(String)
 
         var errorDescription: String? {
             switch self {
             case .rateLimited(let seconds): return "Rate limited, wait \(seconds)s"
-            case .serverError: return "Transcription service unavailable"
+            case .serverError: return "Groq unavailable"
             case .timedOut: return "Timed out"
             case .emptyTranscription: return "No speech detected"
             case .tooLarge: return "Recording too large"
@@ -312,6 +338,7 @@ enum TranscriptionAPI {
             case .notFound: return "Resource not found"
             case .unprocessable(let message): return message
             case .failedDependency(let message): return message
+            case .capacityExceeded: return "Service at capacity"
             case .other(let message): return message
             }
         }
