@@ -1,162 +1,158 @@
 .POSIX:
 SHELL := /bin/bash
 
-# Paths
-APP_PATH         ?= /Applications/GroqDictate.app
-APP_EXECUTABLE    = $(APP_PATH)/Contents/MacOS/GroqDictate
-BUILD_EXECUTABLE  = .build/release/GroqDictate
-BUNDLE_ID        ?= com.groqdictate
-KEYCHAIN_SERVICE ?= com.groqdictate
+APP_NAME := GroqDictate
+SCHEME := $(APP_NAME)
+PROJECT := $(APP_NAME).xcodeproj
+BUNDLE_ID := com.groqdictate
+
+BUILD_ROOT := .build
+DERIVED_DATA := $(BUILD_ROOT)/DerivedData
+DIST_DIR := dist
+
+HOST_ARCH := $(shell uname -m)
+DEV_DESTINATION := platform=macOS,arch=$(HOST_ARCH)
+RELEASE_DESTINATION := generic/platform=macOS
+
+DEBUG_APP := $(DERIVED_DATA)/Build/Products/Debug/$(APP_NAME).app
+DEBUG_EXECUTABLE := $(DEBUG_APP)/Contents/MacOS/$(APP_NAME)
+RELEASE_APP_UNSIGNED := $(DERIVED_DATA)/Build/Products/Release/$(APP_NAME).app
+
+APP_PATH ?= /Applications/$(APP_NAME).app
+INSTALLED_EXECUTABLE := $(APP_PATH)/Contents/MacOS/$(APP_NAME)
+
+SIGNED_APP := $(DIST_DIR)/$(APP_NAME).app
+ZIP_PATH := $(DIST_DIR)/$(APP_NAME).zip
+ENTITLEMENTS_FILE := GroqDictate/GroqDictate.entitlements
+
+DEVELOPER_ID_APP ?=
+NOTARY_PROFILE ?=
+KEYCHAIN_SERVICE ?= $(BUNDLE_ID)
 KEYCHAIN_ACCOUNT ?= groq-api-key
-CODESIGN_IDENTITY ?=
 
-# LaunchAgent / debug logging
-LAUNCH_AGENT_LABEL ?= com.groqdictate
-LAUNCH_AGENT_PATH  ?= $(HOME)/Library/LaunchAgents/com.groqdictate.plist
-DEBUG_LOG_DIR      ?= $(HOME)/Library/Logs/GroqDictate
-DEBUG_STDOUT_PATH  ?= $(DEBUG_LOG_DIR)/stdout.log
-DEBUG_STDERR_PATH  ?= $(DEBUG_LOG_DIR)/stderr.log
+# Optional behavior flags
+RESET ?= 0
+INSTALL ?= 0
 
-# ── Build ─────────────────────────────────────────────
-.PHONY: build install run rebuild clean-state reset-and-run \
-        boot-debug-enable boot-debug-disable boot-debug-status help
+.PHONY: help doctor clean reset dev release
 
-build:
-	swift build -c release
-	@test -f "$(BUILD_EXECUTABLE)" || { echo "❌ Build output not found"; exit 1; }
-	@echo "✅ Build complete"
-
-# ── Install ───────────────────────────────────────────
-install: build
-	@test -d "$(APP_PATH)" || { echo "❌ App bundle not found: $(APP_PATH)"; exit 1; }
-	-@pkill -x GroqDictate 2>/dev/null; sleep 0.3
-	install -m 755 "$(BUILD_EXECUTABLE)" "$(APP_EXECUTABLE)"
-	@if [ -n "$(CODESIGN_IDENTITY)" ]; then \
-		echo "→ Signing with: $(CODESIGN_IDENTITY)"; \
-		codesign -s "$(CODESIGN_IDENTITY)" -f --deep "$(APP_PATH)"; \
-	fi
-	@echo "✅ Install complete"
-
-# ── Run ───────────────────────────────────────────────
-run:
-	@test -x "$(APP_EXECUTABLE)" || { echo "❌ Executable not found: $(APP_EXECUTABLE)"; exit 1; }
-	-@pkill -x GroqDictate 2>/dev/null; sleep 0.3
-	$(APP_EXECUTABLE)
-
-run-debug:
-	@test -x "$(APP_EXECUTABLE)" || { echo "❌ Executable not found: $(APP_EXECUTABLE)"; exit 1; }
-	-@pkill -x GroqDictate 2>/dev/null; sleep 0.3
-	GROQDICTATE_DEBUG=1 $(APP_EXECUTABLE)
-
-run-build:
-	@test -x "$(BUILD_EXECUTABLE)" || { echo "❌ Executable not found: $(BUILD_EXECUTABLE)"; exit 1; }
-	-@pkill -x GroqDictate 2>/dev/null; sleep 0.3
-	$(BUILD_EXECUTABLE)
-
-run-build-debug:
-	@test -x "$(BUILD_EXECUTABLE)" || { echo "❌ Executable not found: $(BUILD_EXECUTABLE)"; exit 1; }
-	-@pkill -x GroqDictate 2>/dev/null; sleep 0.3
-	GROQDICTATE_DEBUG=1 $(BUILD_EXECUTABLE)
-
-# ── Compound targets ─────────────────────────────────
-rebuild: install run
-
-rebuild-debug: install run-debug
-
-# ── Clean state (destructive — requires FORCE=1) ─────
-clean-state:
-	@test "$(FORCE)" = "1" || { echo "❌ Destructive. Run with FORCE=1"; exit 1; }
-	-@pkill -x GroqDictate 2>/dev/null; sleep 0.3
-	-security delete-generic-password -s "$(KEYCHAIN_SERVICE)" -a "$(KEYCHAIN_ACCOUNT)" 2>/dev/null
-	-defaults delete "$(BUNDLE_ID)" 2>/dev/null
-	rm -rf "$(HOME)/Library/Caches/$(BUNDLE_ID)" \
-	       "$(HOME)/Library/Caches/groq-dictate" \
-	       "$(HOME)/Library/HTTPStorages/$(BUNDLE_ID)" \
-	       "$(HOME)/Library/HTTPStorages/groq-dictate"
-	rm -f "$${TMPDIR:-/tmp}/groqdictate.wav" "$${TMPDIR:-/tmp}/groqdictate.flac"
-	-tccutil reset Microphone "$(BUNDLE_ID)" 2>/dev/null
-	-tccutil reset Accessibility "$(BUNDLE_ID)" 2>/dev/null
-	-tccutil reset ListenEvent "$(BUNDLE_ID)" 2>/dev/null
-	@echo "✅ Clean slate"
-
-reset-and-run: clean-state rebuild
-
-# ── Boot debug (LaunchAgent) ─────────────────────────
-boot-debug-status:
-	@test -f "$(LAUNCH_AGENT_PATH)" || { echo "❌ LaunchAgent not found: $(LAUNCH_AGENT_PATH)"; exit 1; }
-	@python3 -c "\
-	import plistlib, sys; \
-	plist = plistlib.load(open('$(LAUNCH_AGENT_PATH)', 'rb')); \
-	env = plist.get('EnvironmentVariables', {}) or {}; \
-	print(f'LaunchAgent: $(LAUNCH_AGENT_PATH)'); \
-	print(f'GROQDICTATE_DEBUG={env.get(\"GROQDICTATE_DEBUG\", \"(unset)\")}'); \
-	print(f'StandardOutPath={plist.get(\"StandardOutPath\", \"(unset)\")}'); \
-	print(f'StandardErrorPath={plist.get(\"StandardErrorPath\", \"(unset)\")}')"
-	@if launchctl print "gui/$$(id -u)/$(LAUNCH_AGENT_LABEL)" >/dev/null 2>&1; then \
-		echo "launchctl: loaded"; \
-	else \
-		echo "launchctl: not loaded"; \
-	fi
-
-boot-debug-enable:
-	@test -f "$(LAUNCH_AGENT_PATH)" || { echo "❌ LaunchAgent not found: $(LAUNCH_AGENT_PATH)"; exit 1; }
-	@mkdir -p "$(DEBUG_LOG_DIR)"
-	@python3 -c "\
-	import plistlib; \
-	path = '$(LAUNCH_AGENT_PATH)'; \
-	plist = plistlib.load(open(path, 'rb')); \
-	env = dict(plist.get('EnvironmentVariables', {}) or {}); \
-	env['GROQDICTATE_DEBUG'] = '1'; \
-	plist['EnvironmentVariables'] = env; \
-	plist['StandardOutPath'] = '$(DEBUG_STDOUT_PATH)'; \
-	plist['StandardErrorPath'] = '$(DEBUG_STDERR_PATH)'; \
-	plistlib.dump(plist, open(path, 'wb'), sort_keys=False)"
-	@gui="gui/$$(id -u)"; \
-	launchctl bootout "$$gui/$(LAUNCH_AGENT_LABEL)" 2>/dev/null || true; \
-	launchctl bootstrap "$$gui" "$(LAUNCH_AGENT_PATH)" 2>/dev/null || true; \
-	launchctl kickstart -k "$$gui/$(LAUNCH_AGENT_LABEL)" 2>/dev/null || true
-	@echo "✅ Boot debug enabled"
-	@$(MAKE) --no-print-directory boot-debug-status
-
-boot-debug-disable:
-	@test -f "$(LAUNCH_AGENT_PATH)" || { echo "❌ LaunchAgent not found: $(LAUNCH_AGENT_PATH)"; exit 1; }
-	@python3 -c "\
-	import plistlib; \
-	path = '$(LAUNCH_AGENT_PATH)'; \
-	plist = plistlib.load(open(path, 'rb')); \
-	env = dict(plist.get('EnvironmentVariables', {}) or {}); \
-	env.pop('GROQDICTATE_DEBUG', None); \
-	plist['EnvironmentVariables'] = env if env else plist.pop('EnvironmentVariables', None); \
-	plist.pop('StandardOutPath', None); \
-	plist.pop('StandardErrorPath', None); \
-	plistlib.dump(plist, open(path, 'wb'), sort_keys=False)"
-	@gui="gui/$$(id -u)"; \
-	launchctl bootout "$$gui/$(LAUNCH_AGENT_LABEL)" 2>/dev/null || true; \
-	launchctl bootstrap "$$gui" "$(LAUNCH_AGENT_PATH)" 2>/dev/null || true; \
-	launchctl kickstart -k "$$gui/$(LAUNCH_AGENT_LABEL)" 2>/dev/null || true
-	@echo "✅ Boot debug disabled"
-	@$(MAKE) --no-print-directory boot-debug-status
-
-# ── Help ──────────────────────────────────────────────
 help:
-	@echo "Usage: make <target> [VAR=value ...]"
+	@echo "GroqDictate pipeline (simplified)"
 	@echo ""
-	@echo "Targets:"
-	@echo "  build                Build release binary"
-	@echo "  install              Build + copy into app bundle"
-	@echo "  run                  Run installed app"
-	@echo "  run-debug            Run installed app with GROQDICTATE_DEBUG=1"
-	@echo "  run-build            Run .build binary directly"
-	@echo "  run-build-debug      Run .build binary with GROQDICTATE_DEBUG=1"
-	@echo "  rebuild              Build + install + run"
-	@echo "  rebuild-debug        Build + install + run with debug"
-	@echo "  clean-state          Reset keychain/defaults/cache/tcc (needs FORCE=1)"
-	@echo "  reset-and-run        clean-state + rebuild (needs FORCE=1)"
-	@echo "  boot-debug-status    Show LaunchAgent debug config"
-	@echo "  boot-debug-enable    Enable persistent debug logging"
-	@echo "  boot-debug-disable   Disable persistent debug logging"
+	@echo "Core commands:"
+	@echo "  make dev                     Build Debug, install to /Applications, run"
+	@echo "  make release                Build Release, sign, notarize, verify"
+	@echo "  make reset FORCE=1          Remove local app/system traces for clean testing"
+	@echo "  make doctor                 Verify required local tooling"
+	@echo "  make clean                  Remove build/dist artifacts"
 	@echo ""
-	@echo "Variables:"
-	@echo "  APP_PATH             App bundle path (default: /Applications/GroqDictate.app)"
-	@echo "  CODESIGN_IDENTITY    Codesign identity for install"
-	@echo "  FORCE=1              Required for clean-state/reset-and-run"
+	@echo "Flags:"
+	@echo "  RESET=1                     Run reset first (supported by make dev)"
+	@echo "  INSTALL=1                   Install notarized release app to APP_PATH"
+	@echo ""
+	@echo "Release variables:"
+	@echo "  DEVELOPER_ID_APP='Developer ID Application: Name (TEAMID)'"
+	@echo "  NOTARY_PROFILE='notarytool-keychain-profile'"
+	@echo ""
+	@echo "Examples:"
+	@echo "  make dev RESET=1 FORCE=1"
+	@echo "  make release DEVELOPER_ID_APP='Developer ID Application: Name (TEAMID)' NOTARY_PROFILE='profile' INSTALL=1"
+
+doctor:
+	@set -euo pipefail; \
+	xcodebuild -version; \
+	xcrun --find notarytool >/dev/null; \
+	xcrun --find stapler >/dev/null; \
+	codesign --version; \
+	spctl --version || true
+
+clean:
+	@rm -rf "$(BUILD_ROOT)" "$(DIST_DIR)"
+
+reset:
+	@set -euo pipefail; \
+	test "$(FORCE)" = "1" || { echo "❌ Destructive action. Re-run with FORCE=1"; exit 1; }; \
+	pkill -x "$(APP_NAME)" >/dev/null 2>&1 || true; \
+	rm -rf "$(APP_PATH)"; \
+	rm -rf "$(BUILD_ROOT)" "$(DIST_DIR)"; \
+	defaults delete "$(BUNDLE_ID)" >/dev/null 2>&1 || true; \
+	rm -f "$${HOME}/Library/Preferences/$(BUNDLE_ID).plist"; \
+	rm -rf "$${HOME}/Library/Caches/$(BUNDLE_ID)"; \
+	rm -rf "$${HOME}/Library/HTTPStorages/$(BUNDLE_ID)"; \
+	rm -rf "$${HOME}/Library/Saved Application State/$(BUNDLE_ID).savedState"; \
+	rm -rf "$${HOME}/Library/Logs/$(APP_NAME)"; \
+	rm -rf "$${HOME}/Library/Application Support/$(APP_NAME)"; \
+	rm -rf "$${HOME}/Library/Application Support/$(BUNDLE_ID)"; \
+	security delete-generic-password -s "$(KEYCHAIN_SERVICE)" -a "$(KEYCHAIN_ACCOUNT)" >/dev/null 2>&1 || true; \
+	rm -f "$${TMPDIR:-/tmp}/groqdictate"*.wav "$${TMPDIR:-/tmp}/groqdictate"*.flac; \
+	tccutil reset Microphone "$(BUNDLE_ID)" >/dev/null 2>&1 || true; \
+	tccutil reset Accessibility "$(BUNDLE_ID)" >/dev/null 2>&1 || true; \
+	tccutil reset ListenEvent "$(BUNDLE_ID)" >/dev/null 2>&1 || true; \
+	tccutil reset PostEvent "$(BUNDLE_ID)" >/dev/null 2>&1 || true; \
+	echo "✅ Local app state reset complete for $(BUNDLE_ID)"; \
+	echo "ℹ️  If login/background entries remain, remove them in System Settings → General → Login Items"
+
+dev:
+	@set -euo pipefail; \
+	if [ "$(RESET)" = "1" ]; then \
+		$(MAKE) --no-print-directory reset FORCE=$(FORCE); \
+	fi; \
+	xcodebuild \
+		-project "$(PROJECT)" \
+		-scheme "$(SCHEME)" \
+		-configuration Debug \
+		-destination "$(DEV_DESTINATION)" \
+		-derivedDataPath "$(DERIVED_DATA)" \
+		CODE_SIGNING_ALLOWED=NO \
+		CODE_SIGNING_REQUIRED=NO \
+		CODE_SIGN_IDENTITY="" \
+		-quiet; \
+	test -d "$(DEBUG_APP)" || { echo "❌ Debug build output missing"; exit 1; }; \
+	mkdir -p "$$(dirname "$(APP_PATH)")"; \
+	pkill -x "$(APP_NAME)" >/dev/null 2>&1 || true; \
+	rm -rf "$(APP_PATH)"; \
+	cp -R "$(DEBUG_APP)" "$(APP_PATH)"; \
+	test -x "$(INSTALLED_EXECUTABLE)" || { echo "❌ Executable not found: $(INSTALLED_EXECUTABLE)"; exit 1; }; \
+	echo "✅ Debug app installed: $(APP_PATH)"; \
+	"$(INSTALLED_EXECUTABLE)"
+
+release:
+	@set -euo pipefail; \
+	test -n "$(DEVELOPER_ID_APP)" || { echo "❌ DEVELOPER_ID_APP is required"; exit 1; }; \
+	test -n "$(NOTARY_PROFILE)" || { echo "❌ NOTARY_PROFILE is required"; exit 1; }; \
+	xcodebuild \
+		-project "$(PROJECT)" \
+		-scheme "$(SCHEME)" \
+		-configuration Release \
+		-destination "$(RELEASE_DESTINATION)" \
+		-derivedDataPath "$(DERIVED_DATA)" \
+		CODE_SIGNING_ALLOWED=NO \
+		CODE_SIGNING_REQUIRED=NO \
+		CODE_SIGN_IDENTITY="" \
+		-quiet; \
+	test -d "$(RELEASE_APP_UNSIGNED)" || { echo "❌ Release build output missing"; exit 1; }; \
+	rm -rf "$(DIST_DIR)"; \
+	mkdir -p "$(DIST_DIR)"; \
+	cp -R "$(RELEASE_APP_UNSIGNED)" "$(SIGNED_APP)"; \
+	codesign \
+		--force \
+		--options runtime \
+		--timestamp \
+		--entitlements "$(ENTITLEMENTS_FILE)" \
+		--sign "$(DEVELOPER_ID_APP)" \
+		"$(SIGNED_APP)"; \
+	codesign --verify --deep --strict --verbose=2 "$(SIGNED_APP)"; \
+	rm -f "$(ZIP_PATH)"; \
+	ditto -c -k --keepParent "$(SIGNED_APP)" "$(ZIP_PATH)"; \
+	xcrun notarytool submit "$(ZIP_PATH)" --keychain-profile "$(NOTARY_PROFILE)" --wait; \
+	xcrun stapler staple -v "$(SIGNED_APP)"; \
+	xcrun stapler validate -v "$(SIGNED_APP)"; \
+	spctl -a -vvv --type execute "$(SIGNED_APP)"; \
+	echo "✅ Release app ready: $(SIGNED_APP)"; \
+	if [ "$(INSTALL)" = "1" ]; then \
+		mkdir -p "$$(dirname "$(APP_PATH)")"; \
+		pkill -x "$(APP_NAME)" >/dev/null 2>&1 || true; \
+		rm -rf "$(APP_PATH)"; \
+		cp -R "$(SIGNED_APP)" "$(APP_PATH)"; \
+		echo "✅ Installed release app: $(APP_PATH)"; \
+	fi
