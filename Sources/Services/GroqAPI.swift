@@ -2,6 +2,7 @@ import Foundation
 
 enum TranscriptionAPI {
     private static let baseURL = AppConstants.URLs.transcriptions
+    private static let model = "gpt-4o-transcribe"
     private static let maxFileSize = 25 * 1024 * 1024
     private static let requestTimeout: TimeInterval = 12
     private static let resourceTimeout: TimeInterval = 30
@@ -80,9 +81,9 @@ enum TranscriptionAPI {
             body.append("\(value)\r\n")
         }
 
-        field("model", config.model)
+        field("model", model)
         field("language", config.language)
-        field("response_format", "verbose_json")
+        field("response_format", "json")
         field("temperature", "0")
 
         body.append("--\(boundary)\r\n")
@@ -214,37 +215,7 @@ enum TranscriptionAPI {
             return trimmed.isEmpty ? nil : trimmed
         }
 
-        guard let segments = json["segments"] as? [[String: Any]] else {
-            return String(data: data, encoding: .utf8)?.trimmingCharacters(in: .whitespacesAndNewlines)
-        }
-
-        var kept = 0
-        var dropped = 0
-        var lastEnd: Double = 0
-
-        let text = segments.compactMap { segment -> String? in
-            let start = segment["start"] as? Double ?? 0
-            let end = segment["end"] as? Double ?? 0
-            let compressionRatio = segment["compression_ratio"] as? Double ?? 0
-            let gap = start - lastEnd
-
-            if gap > AppConstants.Transcription.maxSegmentGapSeconds && compressionRatio < AppConstants.Transcription.minCompressionRatio {
-                let preview = (segment["text"] as? String ?? "").prefix(40)
-                AppLog.debug(
-                    String(format: "segment dropped t=%.1f-%.1fs gap=%.1fs compress=%.2f text=%@", start, end, gap, compressionRatio, String(preview)),
-                    category: .network
-                )
-                dropped += 1
-                return nil
-            }
-
-            lastEnd = end
-            kept += 1
-            return segment["text"] as? String
-        }.joined().trimmingCharacters(in: .whitespacesAndNewlines)
-
-        AppLog.debug("segments kept=\(kept) dropped=\(dropped)", category: .network)
-        return text.isEmpty ? nil : text
+        return String(data: data, encoding: .utf8)?.trimmingCharacters(in: .whitespacesAndNewlines)
     }
 
     private static func mapHTTPError(status: Int, headers: HTTPURLResponse, body: Data) -> TranscriptionError {

@@ -1,7 +1,7 @@
 name: GroqDictate
 options:
   deploymentTarget:
-    macOS: "15.0"
+    macOS: "14.0"
   xcodeVersion: "16.0"
   generateEmptyDirectories: false
 
@@ -15,6 +15,7 @@ targets:
     platform: macOS
     sources:
       - path: Sources
+      - path: GroqDictate/Assets.xcassets
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: com.groqdictate
@@ -23,7 +24,6 @@ targets:
         INFOPLIST_FILE: GroqDictate/Info.plist
         CODE_SIGN_ENTITLEMENTS: GroqDictate/GroqDictate.entitlements
         CODE_SIGN_STYLE: Automatic
-        DEVELOPMENT_TEAM: G729H95F8U
         SWIFT_OPTIMIZATION_LEVEL[config=Release]: -Osize
         OTHER_LDFLAGS:
           - -Xlinker

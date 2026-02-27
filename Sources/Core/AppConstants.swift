@@ -17,11 +17,6 @@ enum AppConstants {
         static let flac = "groqdictate.flac"
     }
 
-    enum Transcription {
-        static let maxSegmentGapSeconds: Double = 8
-        static let minCompressionRatio: Double = 0.8
-    }
-
     enum Diagnostics {
         static let debugLoggingEnabled = ProcessInfo.processInfo.environment["GROQDICTATE_DEBUG"] == "1"
     }

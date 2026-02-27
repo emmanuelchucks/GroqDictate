@@ -18,6 +18,7 @@
 		6E385F86CFC602FE270FC2A6 /* GroqAPI.swift in Sources */ = {isa = PBXBuildFile; fileRef = 418C95F8E57DAB14496A3BE0 /* GroqAPI.swift */; };
 		90D15C543DC56CC75F2DB9FF /* SetupWindow.swift in Sources */ = {isa = PBXBuildFile; fileRef = 00DE7481DB590DF65091BA6E /* SetupWindow.swift */; };
 		CCF0C9CA70F08E9C93653280 /* Config.swift in Sources */ = {isa = PBXBuildFile; fileRef = 847D12320F149726245D2221 /* Config.swift */; };
+		D03888460ECA00D3BE01E614 /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = 39658BDC555554934C00F32D /* Assets.xcassets */; };
 		D3A988FE131D2292FCC3EC8B /* main.swift in Sources */ = {isa = PBXBuildFile; fileRef = 05DB0DE76801ADB10FD9D67C /* main.swift */; };
 		DACE024458013D9CA8EC4894 /* AboutDialog.swift in Sources */ = {isa = PBXBuildFile; fileRef = 98175286F0C06E36428CBACC /* AboutDialog.swift */; };
 		DB2158EA3753554308C7ED13 /* AppStrings.swift in Sources */ = {isa = PBXBuildFile; fileRef = 946C9865B161C71D4E3DC512 /* AppStrings.swift */; };
@@ -28,6 +29,7 @@
 		00DE7481DB590DF65091BA6E /* SetupWindow.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SetupWindow.swift; sourceTree = "<group>"; };
 		05DB0DE76801ADB10FD9D67C /* main.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = main.swift; sourceTree = "<group>"; };
 		353B790FCD5D726C3BE81822 /* AudioRecorder.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AudioRecorder.swift; sourceTree = "<group>"; };
+		39658BDC555554934C00F32D /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
 		418C95F8E57DAB14496A3BE0 /* GroqAPI.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GroqAPI.swift; sourceTree = "<group>"; };
 		6B0BE28EBDAD867F920D1D48 /* PasteTargetInspector.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PasteTargetInspector.swift; sourceTree = "<group>"; };
 		847D12320F149726245D2221 /* Config.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Config.swift; sourceTree = "<group>"; };
@@ -54,6 +56,14 @@
 			path = Core;
 			sourceTree = "<group>";
 		};
+		202C1EC5FCDEE4F0B61C8E94 /* GroqDictate */ = {
+			isa = PBXGroup;
+			children = (
+				39658BDC555554934C00F32D /* Assets.xcassets */,
+			);
+			path = GroqDictate;
+			sourceTree = "<group>";
+		};
 		2B2DBA571D15F6BFF29D7785 /* Sources */ = {
 			isa = PBXGroup;
 			children = (
@@ -68,6 +78,7 @@
 		3D8CFCF8673B55DB69F2DFA9 = {
 			isa = PBXGroup;
 			children = (
+				202C1EC5FCDEE4F0B61C8E94 /* GroqDictate */,
 				2B2DBA571D15F6BFF29D7785 /* Sources */,
 				9E45049285238FE6D08211C7 /* Products */,
 			);
@@ -119,6 +130,7 @@
 			buildConfigurationList = 5B2C97BDD1FDC959C3B83585 /* Build configuration list for PBXNativeTarget "GroqDictate" */;
 			buildPhases = (
 				57FFD95A1A3DA603CE89D507 /* Sources */,
+				98AC2E051065F2C46CCA6B4B /* Resources */,
 			);
 			buildRules = (
 			);
@@ -141,7 +153,6 @@
 				LastUpgradeCheck = 1600;
 				TargetAttributes = {
 					30D973287298264283F07674 = {
-						DevelopmentTeam = G729H95F8U;
 						ProvisioningStyle = Automatic;
 					};
 				};
@@ -164,6 +175,17 @@
 			);
 		};
 /* End PBXProject section */
+
+/* Begin PBXResourcesBuildPhase section */
+		98AC2E051065F2C46CCA6B4B /* Resources */ = {
+			isa = PBXResourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				D03888460ECA00D3BE01E614 /* Assets.xcassets in Resources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXResourcesBuildPhase section */
 
 /* Begin PBXSourcesBuildPhase section */
 		57FFD95A1A3DA603CE89D507 /* Sources */ = {
@@ -241,7 +263,7 @@
 				GCC_WARN_UNINITIALIZED_AUTOS = YES_AGGRESSIVE;
 				GCC_WARN_UNUSED_FUNCTION = YES;
 				GCC_WARN_UNUSED_VARIABLE = YES;
-				MACOSX_DEPLOYMENT_TARGET = 15.0;
+				MACOSX_DEPLOYMENT_TARGET = 14.0;
 				MTL_ENABLE_DEBUG_INFO = INCLUDE_SOURCE;
 				MTL_FAST_MATH = YES;
 				ONLY_ACTIVE_ARCH = YES;
@@ -298,7 +320,7 @@
 				GCC_WARN_UNINITIALIZED_AUTOS = YES_AGGRESSIVE;
 				GCC_WARN_UNUSED_FUNCTION = YES;
 				GCC_WARN_UNUSED_VARIABLE = YES;
-				MACOSX_DEPLOYMENT_TARGET = 15.0;
+				MACOSX_DEPLOYMENT_TARGET = 14.0;
 				MTL_ENABLE_DEBUG_INFO = NO;
 				MTL_FAST_MATH = YES;
 				PRODUCT_NAME = "$(TARGET_NAME)";
@@ -317,7 +339,6 @@
 				CODE_SIGN_STYLE = Automatic;
 				COMBINE_HIDPI_IMAGES = YES;
 				CURRENT_PROJECT_VERSION = 1;
-				DEVELOPMENT_TEAM = G729H95F8U;
 				GENERATE_INFOPLIST_FILE = NO;
 				INFOPLIST_FILE = GroqDictate/Info.plist;
 				LD_RUNPATH_SEARCH_PATHS = (
@@ -343,7 +364,6 @@
 				CODE_SIGN_STYLE = Automatic;
 				COMBINE_HIDPI_IMAGES = YES;
 				CURRENT_PROJECT_VERSION = 1;
-				DEVELOPMENT_TEAM = G729H95F8U;
 				GENERATE_INFOPLIST_FILE = NO;
 				INFOPLIST_FILE = GroqDictate/Info.plist;
 				LD_RUNPATH_SEARCH_PATHS = (

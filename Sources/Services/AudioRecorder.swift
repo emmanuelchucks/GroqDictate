@@ -49,13 +49,13 @@ final class AudioRecorder {
     private static let bufferCount = 3
 
     private static let trimWindowMs: Float64 = 20
-    private static let trimSpeechRMSThreshold: Float = 0.009
+    private static let trimSpeechRMSThreshold: Float = 0.005
     private static let trimMinLeadingSpeechWindows = 4
-    private static let trimMinTrailingSpeechWindows = 20
+    private static let trimMinTrailingSpeechWindows = 8
     private static let trimLeadingPaddingMs: Float64 = 120
-    private static let trimTrailingPaddingMs: Float64 = 40
+    private static let trimTrailingPaddingMs: Float64 = 150
     private static let trimMinLeadingTrimMs: Float64 = 180
-    private static let trimMinTrailingTrimMs: Float64 = 60
+    private static let trimMinTrailingTrimMs: Float64 = 120
     private static let trimMinResultMs: Float64 = 300
 
     func start() throws {

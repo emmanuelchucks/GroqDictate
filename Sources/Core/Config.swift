@@ -2,7 +2,6 @@ import Foundation
 
 struct Config {
     let apiKey: String
-    let model: String
     let language: String
     let inputGain: Float
     let micUID: String?
@@ -17,7 +16,6 @@ struct Config {
     }
 
     enum DefaultValue {
-        static let model = "gpt-4o-transcribe"
         static let language = "en"
         static let inputGain: Float = 5.0
     }
@@ -33,7 +31,6 @@ struct Config {
 
         return Config(
             apiKey: apiKey,
-            model: DefaultValue.model,
             language: DefaultValue.language,
             inputGain: gain > 0 ? gain : DefaultValue.inputGain,
             micUID: (mic?.isEmpty ?? true) ? nil : mic

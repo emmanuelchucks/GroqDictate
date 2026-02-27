@@ -356,7 +356,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     private func transcribe(fileURL: URL, config: Config) {
-        AppLog.debug("starting transcription model=\(config.model) file=\(fileURL.lastPathComponent)", category: .network)
+        AppLog.debug("starting transcription file=\(fileURL.lastPathComponent)", category: .network)
         TranscriptionAPI.transcribe(fileURL: fileURL, config: config) { [weak self] result in
             DispatchQueue.main.async {
                 guard let self else { return }
