@@ -1,5 +1,6 @@
 import AVFoundation
 import Cocoa
+import ServiceManagement
 
 final class AppDelegate: NSObject, NSApplicationDelegate {
     enum ErrorKind {
@@ -28,6 +29,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private let hotkeys = HotkeyMonitor()
 
     private var statusItem: NSStatusItem?
+    private var launchAtLoginMenuItem: NSMenuItem?
     private var setupWindow: SetupWindow?
     private var settingsReturnApp: NSRunningApplication?
     private var dictationTargetApp: NSRunningApplication?
@@ -52,6 +54,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         } else {
             showSetup(isOnboarding: true)
         }
+    }
+
+    func applicationDidBecomeActive(_ notification: Notification) {
+        refreshLaunchAtLoginMenuState()
     }
 
     func applicationShouldHandleReopen(_ sender: NSApplication, hasVisibleWindows flag: Bool) -> Bool {
@@ -135,6 +141,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         menu.addItem(NSMenuItem(title: AppStrings.Menu.triggerHint, action: nil, keyEquivalent: ""))
         menu.addItem(NSMenuItem(title: AppStrings.Menu.cancelHint, action: nil, keyEquivalent: ""))
         menu.addItem(.separator())
+
+        let launchAtLoginItem = NSMenuItem(title: AppStrings.Menu.launchAtLogin, action: #selector(toggleLaunchAtLogin), keyEquivalent: "")
+        launchAtLoginItem.target = self
+        menu.addItem(launchAtLoginItem)
+        launchAtLoginMenuItem = launchAtLoginItem
+        refreshLaunchAtLoginMenuState()
+
         menu.addItem(NSMenuItem(title: AppStrings.Menu.settings, action: #selector(showSetupFromMenu), keyEquivalent: ","))
         menu.addItem(.separator())
         menu.addItem(NSMenuItem(title: AppStrings.Menu.quit, action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q"))
@@ -145,6 +158,36 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     @objc private func showSetupFromMenu() {
         showSetup(isOnboarding: false)
+    }
+
+    @objc private func toggleLaunchAtLogin() {
+        guard #available(macOS 13.0, *) else { return }
+
+        do {
+            if SMAppService.mainApp.status == .enabled {
+                try SMAppService.mainApp.unregister()
+                AppLog.event("launch-at-login disabled", category: .app)
+            } else {
+                try SMAppService.mainApp.register()
+                AppLog.event("launch-at-login enabled", category: .app)
+            }
+        } catch {
+            AppLog.error("failed to toggle launch-at-login (\(error.localizedDescription))", category: .app)
+        }
+
+        refreshLaunchAtLoginMenuState()
+    }
+
+    private func refreshLaunchAtLoginMenuState() {
+        guard let item = launchAtLoginMenuItem else { return }
+        guard #available(macOS 13.0, *) else {
+            item.state = .off
+            item.isEnabled = false
+            return
+        }
+
+        item.state = SMAppService.mainApp.status == .enabled ? .on : .off
+        item.isEnabled = true
     }
 
     @objc private func showAbout() {

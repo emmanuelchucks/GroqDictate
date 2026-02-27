@@ -10,6 +10,7 @@ enum AppStrings {
         static let triggerHint = "Right ⌘ — start / stop"
         static let cancelHint = "Esc — cancel"
         static let about = "About GroqDictate"
+        static let launchAtLogin = "Launch at Login"
         static let settings = "Settings…"
         static let quit = "Quit GroqDictate"
     }

@@ -33,6 +33,7 @@ KEYCHAIN_ACCOUNT ?= openai-api-key
 # Optional behavior flags
 RESET ?= 0
 INSTALL ?= 0
+DEBUG_PERSIST ?= 0
 
 .PHONY: help doctor clean reset dev release
 
@@ -49,14 +50,15 @@ help:
 	@echo "Flags:"
 	@echo "  RESET=1                     Run reset first (supported by make dev)"
 	@echo "  INSTALL=1                   Install notarized release app to APP_PATH"
+	@echo "  DEBUG_PERSIST=1             Enable persistent debug logs via app defaults"
 	@echo ""
 	@echo "Release variables:"
 	@echo "  DEVELOPER_ID_APP='Developer ID Application: Name (TEAMID)'"
 	@echo "  NOTARY_PROFILE='notarytool-keychain-profile'"
 	@echo ""
 	@echo "Examples:"
-	@echo "  make dev RESET=1 FORCE=1"
-	@echo "  make release DEVELOPER_ID_APP='Developer ID Application: Name (TEAMID)' NOTARY_PROFILE='profile' INSTALL=1"
+	@echo "  make dev RESET=1 FORCE=1 DEBUG_PERSIST=1"
+	@echo "  make release DEVELOPER_ID_APP='Developer ID Application: Name (TEAMID)' NOTARY_PROFILE='profile' INSTALL=1 DEBUG_PERSIST=1"
 
 doctor:
 	@set -euo pipefail; \
@@ -113,6 +115,10 @@ dev:
 	rm -rf "$(APP_PATH)"; \
 	cp -R "$(DEBUG_APP)" "$(APP_PATH)"; \
 	test -x "$(INSTALLED_EXECUTABLE)" || { echo "❌ Executable not found: $(INSTALLED_EXECUTABLE)"; exit 1; }; \
+	if [ "$(DEBUG_PERSIST)" = "1" ]; then \
+		defaults write "$(BUNDLE_ID)" debug-logging-enabled -bool true; \
+		echo "✅ Persistent debug logging enabled"; \
+	fi; \
 	echo "✅ Debug app installed: $(APP_PATH)"; \
 	"$(INSTALLED_EXECUTABLE)"
 
@@ -148,6 +154,10 @@ release:
 	xcrun stapler staple -v "$(SIGNED_APP)"; \
 	xcrun stapler validate -v "$(SIGNED_APP)"; \
 	spctl -a -vvv --type execute "$(SIGNED_APP)"; \
+	if [ "$(DEBUG_PERSIST)" = "1" ]; then \
+		defaults write "$(BUNDLE_ID)" debug-logging-enabled -bool true; \
+		echo "✅ Persistent debug logging enabled"; \
+	fi; \
 	echo "✅ Release app ready: $(SIGNED_APP)"; \
 	if [ "$(INSTALL)" = "1" ]; then \
 		mkdir -p "$$(dirname "$(APP_PATH)")"; \

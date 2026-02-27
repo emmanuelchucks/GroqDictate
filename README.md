@@ -31,6 +31,12 @@ If you want a clean-room run first:
 make dev RESET=1 FORCE=1
 ```
 
+If you want long-running dogfood logs persisted to disk:
+
+```bash
+make dev RESET=1 FORCE=1 DEBUG_PERSIST=1
+```
+
 ### Full release (standard Developer ID flow)
 
 ```bash
@@ -48,6 +54,15 @@ make release \
   DEVELOPER_ID_APP="Developer ID Application: Your Name (TEAMID)" \
   NOTARY_PROFILE="your-notarytool-profile" \
   INSTALL=1
+```
+
+For release dogfooding with persistent debug logs enabled:
+
+```bash
+make release \
+  DEVELOPER_ID_APP="Developer ID Application: Your Name (TEAMID)" \
+  NOTARY_PROFILE="your-notarytool-profile" \
+  INSTALL=1 DEBUG_PERSIST=1
 ```
 
 ### Full local state reset
@@ -68,6 +83,17 @@ make doctor
 2. Open Settings and enter your OpenAI API key.
 3. Grant Microphone permission.
 4. Grant Accessibility permission for more reliable global key handling.
+5. (Optional) Enable **Launch at Login** from the menu bar.
+
+## Persistent debug logging
+
+When `DEBUG_PERSIST=1` is used, debug logging is enabled via app defaults and survives relaunch/login.
+
+Log file path:
+
+```text
+~/Library/Logs/GroqDictate/app.log
+```
 
 ## Keyboard shortcuts
 
