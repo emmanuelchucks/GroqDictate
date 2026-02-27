@@ -1,7 +1,7 @@
 import Foundation
 
-enum GroqAPI {
-    private static let baseURL = AppConstants.URLs.groqTranscriptions
+enum TranscriptionAPI {
+    private static let baseURL = AppConstants.URLs.transcriptions
     private static let maxFileSize = 25 * 1024 * 1024
     private static let requestTimeout: TimeInterval = 12
     private static let resourceTimeout: TimeInterval = 30
@@ -18,7 +18,7 @@ enum GroqAPI {
     }()
 
     static func warmConnection() {
-        var request = URLRequest(url: AppConstants.URLs.groqAPIHost)
+        var request = URLRequest(url: AppConstants.URLs.transcriptionAPIHost)
         request.httpMethod = "HEAD"
         request.timeoutInterval = 5
         session.dataTask(with: request) { _, _, _ in }.resume()
@@ -205,10 +205,16 @@ enum GroqAPI {
     }
 
     private static func extractTranscription(from data: Data) -> String? {
-        guard
-            let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
-            let segments = json["segments"] as? [[String: Any]]
-        else {
+        guard let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else {
+            return String(data: data, encoding: .utf8)?.trimmingCharacters(in: .whitespacesAndNewlines)
+        }
+
+        if let text = json["text"] as? String {
+            let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
+            return trimmed.isEmpty ? nil : trimmed
+        }
+
+        guard let segments = json["segments"] as? [[String: Any]] else {
             return String(data: data, encoding: .utf8)?.trimmingCharacters(in: .whitespacesAndNewlines)
         }
 
@@ -266,8 +272,6 @@ enum GroqAPI {
         case 429:
             let retryAfter = headers.value(forHTTPHeaderField: "Retry-After").flatMap(Int.init) ?? 10
             return .rateLimited(retryAfter)
-        case 498:
-            return .capacityExceeded
         case 500, 502, 503:
             return .serverError
         default:
@@ -321,13 +325,12 @@ enum GroqAPI {
         case notFound
         case unprocessable(String)
         case failedDependency(String)
-        case capacityExceeded
         case other(String)
 
         var errorDescription: String? {
             switch self {
             case .rateLimited(let seconds): return "Rate limited, wait \(seconds)s"
-            case .serverError: return "Groq unavailable"
+            case .serverError: return "Transcription service unavailable"
             case .timedOut: return "Timed out"
             case .emptyTranscription: return "No speech detected"
             case .tooLarge: return "Recording too large"
@@ -338,7 +341,6 @@ enum GroqAPI {
             case .notFound: return "Resource not found"
             case .unprocessable(let message): return message
             case .failedDependency(let message): return message
-            case .capacityExceeded: return "Service at capacity"
             case .other(let message): return message
             }
         }
