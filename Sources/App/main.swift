@@ -1,4 +1,5 @@
 import AVFoundation
+import ApplicationServices
 import Cocoa
 import ServiceManagement
 
@@ -34,9 +35,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var settingsReturnApp: NSRunningApplication?
     private var dictationTargetApp: NSRunningApplication?
 
-    private var accessibilityObserver: NSObjectProtocol?
-    private var permissionAnchor: NSWindow?
-
+    private var hasRequestedPostEventAccess = false
+    private var shownPermissionGuidanceActions = Set<PermissionService.GuidanceAction>()
     private var lastAudioFileURL: URL?
     private var panelNoticeToken = UUID()
 
@@ -50,7 +50,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         if Config.hasAPIKey {
             applyConfig()
             GroqAPI.warmConnection()
-            requestPermissionsIfNeeded()
+            requestPermissionsAndStartHotkeys()
         } else {
             showSetup(isOnboarding: true)
         }
@@ -236,88 +236,98 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     private func handlePostSettingsSave() {
-        if AVCaptureDevice.authorizationStatus(for: .audio) == .notDetermined {
-            startPermissionFlow()
-            return
-        }
-
-        finishPermissionFlowAndStart()
+        requestPermissionsAndStartHotkeys(reactivateSettingsReturnApp: true)
     }
 
-    private func startPermissionFlow() {
-        let anchor = NSWindow(
-            contentRect: NSRect(x: -10_000, y: -10_000, width: 1, height: 1),
-            styleMask: [.borderless],
-            backing: .buffered,
-            defer: false
-        )
-        anchor.isReleasedWhenClosed = false
-        anchor.isOpaque = false
-        anchor.backgroundColor = .clear
-        anchor.hasShadow = false
-        anchor.ignoresMouseEvents = true
-        anchor.collectionBehavior = [.canJoinAllSpaces, .ignoresCycle]
-        anchor.isExcludedFromWindowsMenu = true
-        anchor.orderFront(nil)
-
-        permissionAnchor = anchor
-        NSApp.activate(ignoringOtherApps: true)
-        requestPermissionsIfNeeded()
-    }
-
-    private func endPermissionFlow() {
-        permissionAnchor?.close()
-        permissionAnchor = nil
-    }
-
-    private func finishPermissionFlowAndStart() {
-        requestAccessibilityThenStart()
-        endPermissionFlow()
-        focusTracker.reactivate(settingsReturnApp)
-    }
-
-    private func requestPermissionsIfNeeded() {
-        switch AVCaptureDevice.authorizationStatus(for: .audio) {
-        case .notDetermined:
-            AVCaptureDevice.requestAccess(for: .audio) { [weak self] _ in
-                DispatchQueue.main.asyncAfter(deadline: .now() + 0.6) {
-                    self?.finishPermissionFlowAndStart()
-                }
-            }
-        case .authorized, .denied, .restricted:
-            finishPermissionFlowAndStart()
-        @unknown default:
-            finishPermissionFlowAndStart()
-        }
-    }
-
-    private func requestAccessibilityThenStart() {
-        hotkeys.start()
-
-        guard !AXIsProcessTrusted() else {
-            AppLog.debug("accessibility already trusted", category: .app)
-            return
-        }
-
-        AppLog.event("accessibility not trusted, prompting user", category: .app)
-
-        let options = [kAXTrustedCheckOptionPrompt.takeUnretainedValue(): true] as CFDictionary
-        _ = AXIsProcessTrustedWithOptions(options)
-
-        accessibilityObserver = DistributedNotificationCenter.default().addObserver(
-            forName: AppConstants.Accessibility.apiNotificationName,
-            object: nil,
-            queue: .main
-        ) { [weak self] _ in
+    private func requestPermissionsAndStartHotkeys(reactivateSettingsReturnApp: Bool = false) {
+        let complete: () -> Void = { [weak self] in
             guard let self else { return }
-            DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
-                guard AXIsProcessTrusted() else { return }
-                self.hotkeys.start()
-                if let observer = self.accessibilityObserver {
-                    DistributedNotificationCenter.default().removeObserver(observer)
-                    self.accessibilityObserver = nil
+            self.requestAccessibilityAndListenEventAccessIfNeeded()
+
+            let hotkeyStatus = self.hotkeys.start()
+            self.handleHotkeyMonitorStartStatus(hotkeyStatus)
+
+            if reactivateSettingsReturnApp {
+                self.focusTracker.reactivate(self.settingsReturnApp)
+            }
+        }
+
+        if PermissionService.shared.preflightMicrophone() == .notDetermined {
+            PermissionService.shared.requestMicrophoneAccess { _ in
+                DispatchQueue.main.async {
+                    complete()
                 }
             }
+            return
+        }
+
+        complete()
+    }
+
+    private func requestAccessibilityAndListenEventAccessIfNeeded() {
+        if PermissionService.shared.preflightAccessibility() == .notTrusted {
+            AppLog.event("accessibility not trusted, prompting user", category: .app)
+            _ = PermissionService.shared.requestAccessibilityAccess(prompt: true)
+        } else {
+            AppLog.debug("accessibility already trusted", category: .app)
+        }
+
+        if PermissionService.shared.preflightListenEventAccess() == .denied {
+            AppLog.event("listen-event access not granted, prompting user", category: .app)
+            _ = PermissionService.shared.requestListenEventAccess()
+        }
+
+        presentPermissionGuidanceIfNeeded()
+    }
+
+    private func presentPermissionGuidanceIfNeeded() {
+        let snapshot = PermissionService.shared.preflight()
+        let actions = PermissionService.guidanceActions(for: snapshot)
+
+        for action in actions where !shownPermissionGuidanceActions.contains(action) {
+            shownPermissionGuidanceActions.insert(action)
+            presentPermissionGuidanceAlert(for: action)
+        }
+    }
+
+    private func presentPermissionGuidanceAlert(for action: PermissionService.GuidanceAction) {
+        let alert = NSAlert()
+        alert.alertStyle = .warning
+
+        switch action {
+        case .accessibilityDenied:
+            alert.messageText = AppStrings.Permissions.accessibilityDeniedTitle
+            alert.informativeText = AppStrings.Permissions.accessibilityDeniedMessage
+        case .inputMonitoringDenied:
+            alert.messageText = AppStrings.Permissions.inputMonitoringDeniedTitle
+            alert.informativeText = AppStrings.Permissions.inputMonitoringDeniedMessage
+        }
+
+        alert.addButton(withTitle: AppStrings.Permissions.openSystemSettings)
+        alert.addButton(withTitle: AppStrings.Permissions.notNow)
+
+        NSApp.activate(ignoringOtherApps: true)
+        let response = alert.runModal()
+        guard response == .alertFirstButtonReturn else { return }
+
+        switch action {
+        case .accessibilityDenied:
+            NSWorkspace.shared.open(AppConstants.URLs.accessibilityPrivacySettings)
+        case .inputMonitoringDenied:
+            NSWorkspace.shared.open(AppConstants.URLs.inputMonitoringPrivacySettings)
+        }
+    }
+
+    private func handleHotkeyMonitorStartStatus(_ status: HotkeyMonitor.StartStatus) {
+        switch status {
+        case .ready:
+            AppLog.debug("hotkeys ready", category: .hotkey)
+        case .fallback:
+            AppLog.event("hotkeys running with fallback monitor", category: .hotkey)
+        case .listenDenied:
+            AppLog.event("hotkeys running with limited permissions (listen denied)", category: .hotkey)
+        case .failed:
+            AppLog.error("hotkeys unavailable; app remains usable from menu", category: .hotkey)
         }
     }
 
@@ -536,7 +546,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             focusTracker.reactivate(dictationTargetApp)
 
             DispatchQueue.main.asyncAfter(deadline: .now() + AppConstants.Timing.simulatedPasteDelay) { [weak self] in
-                self?.simulatePaste()
+                self?.simulatePasteOrFallBackToClipboardNotice()
             }
             return
         }
@@ -610,6 +620,30 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         let name = app.localizedName ?? "unknown"
         let bundleID = app.bundleIdentifier ?? "unknown.bundle"
         return "\(name) (\(bundleID))"
+    }
+
+    private func simulatePasteOrFallBackToClipboardNotice() {
+        guard ensurePostEventAccessForSimulatedPaste() else {
+            AppLog.event("post-event access unavailable; keeping transcription in clipboard", category: .app)
+            showTransientPanelNotice(AppStrings.Panel.copiedToClipboard, reactivateTargetOnDismiss: true)
+            return
+        }
+
+        simulatePaste()
+    }
+
+    private func ensurePostEventAccessForSimulatedPaste() -> Bool {
+        switch PermissionService.shared.preflightPostEventAccess() {
+        case .granted, .unavailable:
+            return true
+        case .denied:
+            guard !hasRequestedPostEventAccess else { return false }
+
+            hasRequestedPostEventAccess = true
+            AppLog.event("post-event access not granted, prompting user", category: .app)
+            let status = PermissionService.shared.requestPostEventAccess()
+            return status == .granted || status == .unavailable
+        }
     }
 
     private func simulatePaste() {

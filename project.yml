@@ -31,3 +31,14 @@ targets:
         GENERATE_INFOPLIST_FILE: false
     entitlements:
       path: GroqDictate/GroqDictate.entitlements
+
+  GroqDictateTests:
+    type: bundle.unit-test
+    platform: macOS
+    sources:
+      - path: Tests/GroqDictateTests
+    dependencies:
+      - target: GroqDictate
+    settings:
+      base:
+        GENERATE_INFOPLIST_FILE: true

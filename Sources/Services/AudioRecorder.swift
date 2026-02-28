@@ -24,6 +24,9 @@ final class AudioRecorder {
             AudioQueueDispose(queue, true)
         }
         try? fileHandle?.close()
+        if let session = currentSession {
+            cleanupSession(session)
+        }
     }
 
     var currentLevel: Float {
@@ -35,13 +38,21 @@ final class AudioRecorder {
     private var _currentLevel: Float = 0
     private let levelLock = NSLock()
 
+    private struct RecordingSession {
+        let id: UUID
+        let directoryURL: URL
+        let wavURL: URL
+        let flacURL: URL
+    }
+
     private var audioQueue: AudioQueueRef?
     private var buffers: [AudioQueueBufferRef] = []
     private var fileHandle: FileHandle?
     private var bytesWritten: UInt32 = 0
+    private var currentSession: RecordingSession?
 
-    private let wavURL = FileManager.default.temporaryDirectory.appendingPathComponent(AppConstants.TempFiles.wav)
-    private let flacURL = FileManager.default.temporaryDirectory.appendingPathComponent(AppConstants.TempFiles.flac)
+    private let sessionRootURL = FileManager.default.temporaryDirectory
+        .appendingPathComponent("groqdictate-recordings", isDirectory: true)
 
     private static let flacThreshold = 10 * 1024 * 1024
     private static let sampleRate: Float64 = 16000
@@ -59,10 +70,16 @@ final class AudioRecorder {
     private static let trimMinResultMs: Float64 = 300
 
     func start() throws {
-        try? FileManager.default.removeItem(at: wavURL)
-        FileManager.default.createFile(atPath: wavURL.path, contents: nil)
+        if let existingSession = currentSession {
+            cleanupSession(existingSession)
+            currentSession = nil
+        }
 
-        fileHandle = try FileHandle(forWritingTo: wavURL)
+        let session = try makeSession()
+        currentSession = session
+        FileManager.default.createFile(atPath: session.wavURL.path, contents: nil)
+
+        fileHandle = try FileHandle(forWritingTo: session.wavURL)
         bytesWritten = 0
         setLevel(0)
         writeWAVHeader(dataSize: 0)
@@ -96,17 +113,21 @@ final class AudioRecorder {
         try? fileHandle?.close()
         fileHandle = nil
 
+        guard let session = currentSession else { return }
+
         guard processRecording else {
-            DispatchQueue.main.async { completion(self.wavURL) }
+            DispatchQueue.main.async { completion(session.wavURL) }
             return
         }
 
-        postProcessRecording(completion: completion)
+        postProcessRecording(for: session, completion: completion)
     }
 
     func cleanup() {
-        try? FileManager.default.removeItem(at: wavURL)
-        try? FileManager.default.removeItem(at: flacURL)
+        if let session = currentSession {
+            cleanupSession(session)
+            currentSession = nil
+        }
         setLevel(0)
     }
 
@@ -137,21 +158,21 @@ final class AudioRecorder {
         }
     }
 
-    private func postProcessRecording(completion: @escaping (URL) -> Void) {
+    private func postProcessRecording(for session: RecordingSession, completion: @escaping (URL) -> Void) {
         DispatchQueue.global(qos: .userInitiated).async {
-            self.trimWAVSilenceEdgesIfNeeded()
+            self.trimWAVSilenceEdgesIfNeeded(wavURL: session.wavURL)
 
-            let fileSize = (try? FileManager.default.attributesOfItem(atPath: self.wavURL.path)[.size] as? Int) ?? 0
+            let fileSize = (try? FileManager.default.attributesOfItem(atPath: session.wavURL.path)[.size] as? Int) ?? 0
             guard fileSize >= Self.flacThreshold else {
-                DispatchQueue.main.async { completion(self.wavURL) }
+                DispatchQueue.main.async { completion(session.wavURL) }
                 return
             }
 
-            self.compressToFLAC(completion: completion)
+            self.compressToFLAC(for: session, completion: completion)
         }
     }
 
-    private func trimWAVSilenceEdgesIfNeeded() {
+    private func trimWAVSilenceEdgesIfNeeded(wavURL: URL) {
         guard let data = try? Data(contentsOf: wavURL, options: .mappedIfSafe), data.count > 44 else { return }
 
         let sampleByteCount = data.count - 44
@@ -284,6 +305,25 @@ final class AudioRecorder {
         }
     }
 
+    private func makeSession() throws -> RecordingSession {
+        try FileManager.default.createDirectory(at: sessionRootURL, withIntermediateDirectories: true)
+
+        let id = UUID()
+        let directoryURL = sessionRootURL.appendingPathComponent(id.uuidString, isDirectory: true)
+        try FileManager.default.createDirectory(at: directoryURL, withIntermediateDirectories: false)
+
+        return RecordingSession(
+            id: id,
+            directoryURL: directoryURL,
+            wavURL: directoryURL.appendingPathComponent(AppConstants.TempFiles.wav, isDirectory: false),
+            flacURL: directoryURL.appendingPathComponent(AppConstants.TempFiles.flac, isDirectory: false)
+        )
+    }
+
+    private func cleanupSession(_ session: RecordingSession) {
+        try? FileManager.default.removeItem(at: session.directoryURL)
+    }
+
     private func writeWAVHeader(dataSize: UInt32) {
         fileHandle?.write(Self.wavHeader(dataSize: dataSize))
     }
@@ -312,13 +352,13 @@ final class AudioRecorder {
         return data
     }
 
-    private func compressToFLAC(completion: @escaping (URL) -> Void) {
-        DispatchQueue.global(qos: .userInitiated).async { [wavURL, flacURL] in
-            try? FileManager.default.removeItem(at: flacURL)
+    private func compressToFLAC(for session: RecordingSession, completion: @escaping (URL) -> Void) {
+        DispatchQueue.global(qos: .userInitiated).async {
+            try? FileManager.default.removeItem(at: session.flacURL)
 
             let process = Process()
             process.executableURL = URL(fileURLWithPath: "/usr/bin/afconvert")
-            process.arguments = ["-f", "flac", "-d", "flac", "-c", "1", wavURL.path, flacURL.path]
+            process.arguments = ["-f", "flac", "-d", "flac", "-c", "1", session.wavURL.path, session.flacURL.path]
             process.standardOutput = FileHandle.nullDevice
             process.standardError = FileHandle.nullDevice
 
@@ -327,9 +367,11 @@ final class AudioRecorder {
                 return process.terminationStatus == 0
             } ?? false
 
-            let outputURL = succeeded && FileManager.default.fileExists(atPath: flacURL.path) ? flacURL : wavURL
-            if outputURL == flacURL {
-                try? FileManager.default.removeItem(at: wavURL)
+            let outputURL = succeeded && FileManager.default.fileExists(atPath: session.flacURL.path)
+                ? session.flacURL
+                : session.wavURL
+            if outputURL == session.flacURL {
+                try? FileManager.default.removeItem(at: session.wavURL)
             }
 
             DispatchQueue.main.async { completion(outputURL) }

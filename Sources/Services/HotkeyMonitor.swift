@@ -1,6 +1,13 @@
 import Cocoa
 
 final class HotkeyMonitor {
+    enum StartStatus: Equatable {
+        case ready
+        case listenDenied
+        case fallback
+        case failed
+    }
+
     private enum KeyCode {
         static let escape: Int = 53
         static let rightCommand: Int = 54
@@ -10,15 +17,24 @@ final class HotkeyMonitor {
     var onEscapePress: (() -> Void)?
     var shouldConsumeEscape: (() -> Bool)?
 
+    private enum ListenEventAccessStatus {
+        case granted
+        case denied
+        case unavailable
+    }
+
     private var eventTap: CFMachPort?
     private var runLoopSource: CFRunLoopSource?
     private var globalMonitor: Any?
     private var localMonitor: Any?
     private var rightCommandDown = false
 
-    func start() {
+    @discardableResult
+    func start() -> StartStatus {
         AppLog.debug("starting hotkey monitor", category: .hotkey)
-        installEventTapOrFallback()
+        let status = installEventTapOrFallback()
+        AppLog.event("hotkey monitor start status=\(describe(status))", category: .hotkey)
+        return status
     }
 
     func stop() {
@@ -26,8 +42,25 @@ final class HotkeyMonitor {
         removeAllMonitors()
     }
 
-    private func installEventTapOrFallback() {
+    private func installEventTapOrFallback() -> StartStatus {
         removeAllMonitors()
+
+        let listenAccess = preflightListenEventAccess()
+        switch listenAccess {
+        case .granted:
+            AppLog.debug("listen-event access granted", category: .hotkey)
+        case .denied:
+            AppLog.event("listen-event access denied; skipping event tap and using fallback", category: .hotkey)
+            let fallbackInstalled = installNSEventFallback()
+            if !fallbackInstalled {
+                AppLog.error("fallback monitor installation failed", category: .hotkey)
+                return .failed
+            }
+            AppLog.event("fallback active with listen-event access denied", category: .hotkey)
+            return .listenDenied
+        case .unavailable:
+            AppLog.debug("listen-event access API unavailable on this macOS version", category: .hotkey)
+        }
 
         let mask: CGEventMask = (1 << CGEventType.flagsChanged.rawValue) | (1 << CGEventType.keyDown.rawValue)
         let selfPtr = Unmanaged.passUnretained(self).toOpaque()
@@ -46,9 +79,16 @@ final class HotkeyMonitor {
             },
             userInfo: selfPtr
         ) else {
-            AppLog.event("event tap unavailable, using NSEvent fallback", category: .hotkey)
-            installNSEventFallback()
-            return
+            AppLog.event("event tap unavailable, attempting NSEvent fallback", category: .hotkey)
+            let fallbackInstalled = installNSEventFallback()
+
+            if !fallbackInstalled {
+                AppLog.error("fallback monitor installation failed", category: .hotkey)
+                return .failed
+            }
+
+            AppLog.event("fallback monitors active", category: .hotkey)
+            return .fallback
         }
 
         AppLog.debug("event tap installed", category: .hotkey)
@@ -58,9 +98,10 @@ final class HotkeyMonitor {
             CFRunLoopAddSource(CFRunLoopGetMain(), runLoopSource, .commonModes)
         }
         CGEvent.tapEnable(tap: tap, enable: true)
+        return .ready
     }
 
-    private func installNSEventFallback() {
+    private func installNSEventFallback() -> Bool {
         AppLog.debug("installing NSEvent fallback monitors", category: .hotkey)
         globalMonitor = NSEvent.addGlobalMonitorForEvents(matching: [.flagsChanged, .keyDown]) { [weak self] event in
             self?.handleNSEvent(event)
@@ -70,6 +111,11 @@ final class HotkeyMonitor {
             self?.handleNSEvent(event)
             return event
         }
+
+        let installedGlobal = globalMonitor != nil
+        let installedLocal = localMonitor != nil
+        AppLog.debug("fallback monitor state global=\(installedGlobal) local=\(installedLocal)", category: .hotkey)
+        return installedGlobal || installedLocal
     }
 
     private func removeAllMonitors() {
@@ -156,5 +202,23 @@ final class HotkeyMonitor {
         }
 
         return false
+    }
+
+    private func preflightListenEventAccess() -> ListenEventAccessStatus {
+        guard #available(macOS 10.15, *) else { return .unavailable }
+        return CGPreflightListenEventAccess() ? .granted : .denied
+    }
+
+    private func describe(_ status: StartStatus) -> String {
+        switch status {
+        case .ready:
+            return "ready"
+        case .listenDenied:
+            return "listenDenied"
+        case .fallback:
+            return "fallback"
+        case .failed:
+            return "failed"
+        }
     }
 }

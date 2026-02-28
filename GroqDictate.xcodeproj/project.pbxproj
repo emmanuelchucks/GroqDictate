@@ -11,34 +11,51 @@
 		0D4E6E9756123D2F454804EF /* AppConstants.swift in Sources */ = {isa = PBXBuildFile; fileRef = F06DBCC30E9F864A7CBAF146 /* AppConstants.swift */; };
 		156BC8B1DC12AC8425F95585 /* AudioRecorder.swift in Sources */ = {isa = PBXBuildFile; fileRef = 353B790FCD5D726C3BE81822 /* AudioRecorder.swift */; };
 		1F8051CBD1A7B17DEEFFE9C5 /* FloatingPanel.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8FF9DB77E84DAB948C897224 /* FloatingPanel.swift */; };
+		1FC7F9F995CCA498CFFD79EA /* PermissionService.swift in Sources */ = {isa = PBXBuildFile; fileRef = 17D1AC83CCF0FA7EB4F8E6DA /* PermissionService.swift */; };
 		27D916FCF172DA40533592EB /* AppLog.swift in Sources */ = {isa = PBXBuildFile; fileRef = ECA808B7D1F99932D7A1D06E /* AppLog.swift */; };
 		3284F9A80F4E7D9A41A68141 /* KeychainHelper.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8BF83D48846C82B2117C8E28 /* KeychainHelper.swift */; };
 		35308FA56C73651DE8138848 /* HotkeyMonitor.swift in Sources */ = {isa = PBXBuildFile; fileRef = 985FE6CA57E573D06BA367F7 /* HotkeyMonitor.swift */; };
 		605FB988472C2B769FC41A8C /* PasteTargetInspector.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6B0BE28EBDAD867F920D1D48 /* PasteTargetInspector.swift */; };
 		6E385F86CFC602FE270FC2A6 /* GroqAPI.swift in Sources */ = {isa = PBXBuildFile; fileRef = 418C95F8E57DAB14496A3BE0 /* GroqAPI.swift */; };
+		8122FC7AC3FCE6A07CAF97FE /* GroqAPIErrorMessageParsingTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7A66A177F76658205803E732 /* GroqAPIErrorMessageParsingTests.swift */; };
 		90D15C543DC56CC75F2DB9FF /* SetupWindow.swift in Sources */ = {isa = PBXBuildFile; fileRef = 00DE7481DB590DF65091BA6E /* SetupWindow.swift */; };
 		CCF0C9CA70F08E9C93653280 /* Config.swift in Sources */ = {isa = PBXBuildFile; fileRef = 847D12320F149726245D2221 /* Config.swift */; };
 		D03888460ECA00D3BE01E614 /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = 39658BDC555554934C00F32D /* Assets.xcassets */; };
 		D3A988FE131D2292FCC3EC8B /* main.swift in Sources */ = {isa = PBXBuildFile; fileRef = 05DB0DE76801ADB10FD9D67C /* main.swift */; };
+		D5195607BD53132839E92A47 /* GroqAPIHTTPErrorMappingTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9307D51D1A9B56BAAFAC87CC /* GroqAPIHTTPErrorMappingTests.swift */; };
 		DACE024458013D9CA8EC4894 /* AboutDialog.swift in Sources */ = {isa = PBXBuildFile; fileRef = 98175286F0C06E36428CBACC /* AboutDialog.swift */; };
 		DB2158EA3753554308C7ED13 /* AppStrings.swift in Sources */ = {isa = PBXBuildFile; fileRef = 946C9865B161C71D4E3DC512 /* AppStrings.swift */; };
 /* End PBXBuildFile section */
+
+/* Begin PBXContainerItemProxy section */
+		3402815D56B59C6FBCFF84A4 /* PBXContainerItemProxy */ = {
+			isa = PBXContainerItemProxy;
+			containerPortal = 85B79A8AFFB09D30539D6AC0 /* Project object */;
+			proxyType = 1;
+			remoteGlobalIDString = 30D973287298264283F07674;
+			remoteInfo = GroqDictate;
+		};
+/* End PBXContainerItemProxy section */
 
 /* Begin PBXFileReference section */
 		0067FE2374BD2B119ABBC956 /* GroqDictate.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = GroqDictate.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		00DE7481DB590DF65091BA6E /* SetupWindow.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SetupWindow.swift; sourceTree = "<group>"; };
 		05DB0DE76801ADB10FD9D67C /* main.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = main.swift; sourceTree = "<group>"; };
+		17D1AC83CCF0FA7EB4F8E6DA /* PermissionService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PermissionService.swift; sourceTree = "<group>"; };
 		353B790FCD5D726C3BE81822 /* AudioRecorder.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AudioRecorder.swift; sourceTree = "<group>"; };
 		39658BDC555554934C00F32D /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
 		418C95F8E57DAB14496A3BE0 /* GroqAPI.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GroqAPI.swift; sourceTree = "<group>"; };
 		6B0BE28EBDAD867F920D1D48 /* PasteTargetInspector.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PasteTargetInspector.swift; sourceTree = "<group>"; };
+		7A66A177F76658205803E732 /* GroqAPIErrorMessageParsingTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GroqAPIErrorMessageParsingTests.swift; sourceTree = "<group>"; };
 		847D12320F149726245D2221 /* Config.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Config.swift; sourceTree = "<group>"; };
 		8BF83D48846C82B2117C8E28 /* KeychainHelper.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = KeychainHelper.swift; sourceTree = "<group>"; };
 		8FF9DB77E84DAB948C897224 /* FloatingPanel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FloatingPanel.swift; sourceTree = "<group>"; };
+		9307D51D1A9B56BAAFAC87CC /* GroqAPIHTTPErrorMappingTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GroqAPIHTTPErrorMappingTests.swift; sourceTree = "<group>"; };
 		946C9865B161C71D4E3DC512 /* AppStrings.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppStrings.swift; sourceTree = "<group>"; };
 		98175286F0C06E36428CBACC /* AboutDialog.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AboutDialog.swift; sourceTree = "<group>"; };
 		985FE6CA57E573D06BA367F7 /* HotkeyMonitor.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HotkeyMonitor.swift; sourceTree = "<group>"; };
 		ECA808B7D1F99932D7A1D06E /* AppLog.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppLog.swift; sourceTree = "<group>"; };
+		F022DFD4D5E8FC315CC0523B /* GroqDictateTests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = GroqDictateTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
 		F06DBCC30E9F864A7CBAF146 /* AppConstants.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppConstants.swift; sourceTree = "<group>"; };
 		FA1486D8921DABF861D36301 /* FocusTracker.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FocusTracker.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
@@ -79,6 +96,7 @@
 			isa = PBXGroup;
 			children = (
 				202C1EC5FCDEE4F0B61C8E94 /* GroqDictate */,
+				C3546C1AA45C4CF50E77B36A /* GroqDictateTests */,
 				2B2DBA571D15F6BFF29D7785 /* Sources */,
 				9E45049285238FE6D08211C7 /* Products */,
 			);
@@ -100,6 +118,7 @@
 				418C95F8E57DAB14496A3BE0 /* GroqAPI.swift */,
 				985FE6CA57E573D06BA367F7 /* HotkeyMonitor.swift */,
 				6B0BE28EBDAD867F920D1D48 /* PasteTargetInspector.swift */,
+				17D1AC83CCF0FA7EB4F8E6DA /* PermissionService.swift */,
 			);
 			path = Services;
 			sourceTree = "<group>";
@@ -108,8 +127,19 @@
 			isa = PBXGroup;
 			children = (
 				0067FE2374BD2B119ABBC956 /* GroqDictate.app */,
+				F022DFD4D5E8FC315CC0523B /* GroqDictateTests.xctest */,
 			);
 			name = Products;
+			sourceTree = "<group>";
+		};
+		C3546C1AA45C4CF50E77B36A /* GroqDictateTests */ = {
+			isa = PBXGroup;
+			children = (
+				7A66A177F76658205803E732 /* GroqAPIErrorMessageParsingTests.swift */,
+				9307D51D1A9B56BAAFAC87CC /* GroqAPIHTTPErrorMappingTests.swift */,
+			);
+			name = GroqDictateTests;
+			path = Tests/GroqDictateTests;
 			sourceTree = "<group>";
 		};
 		D60774762BA3728FDD37DB7E /* UI */ = {
@@ -143,6 +173,24 @@
 			productReference = 0067FE2374BD2B119ABBC956 /* GroqDictate.app */;
 			productType = "com.apple.product-type.application";
 		};
+		6AD1CA2258B2BDCD73DB9658 /* GroqDictateTests */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = 0CA6CE30D37E7CC86AC25425 /* Build configuration list for PBXNativeTarget "GroqDictateTests" */;
+			buildPhases = (
+				21696F4113596C4D86E0ED84 /* Sources */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+				EAA6FB537CB2A20C45451223 /* PBXTargetDependency */,
+			);
+			name = GroqDictateTests;
+			packageProductDependencies = (
+			);
+			productName = GroqDictateTests;
+			productReference = F022DFD4D5E8FC315CC0523B /* GroqDictateTests.xctest */;
+			productType = "com.apple.product-type.bundle.unit-test";
+		};
 /* End PBXNativeTarget section */
 
 /* Begin PBXProject section */
@@ -172,6 +220,7 @@
 			projectRoot = "";
 			targets = (
 				30D973287298264283F07674 /* GroqDictate */,
+				6AD1CA2258B2BDCD73DB9658 /* GroqDictateTests */,
 			);
 		};
 /* End PBXProject section */
@@ -188,6 +237,15 @@
 /* End PBXResourcesBuildPhase section */
 
 /* Begin PBXSourcesBuildPhase section */
+		21696F4113596C4D86E0ED84 /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				8122FC7AC3FCE6A07CAF97FE /* GroqAPIErrorMessageParsingTests.swift in Sources */,
+				D5195607BD53132839E92A47 /* GroqAPIHTTPErrorMappingTests.swift in Sources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
 		57FFD95A1A3DA603CE89D507 /* Sources */ = {
 			isa = PBXSourcesBuildPhase;
 			buildActionMask = 2147483647;
@@ -204,12 +262,21 @@
 				35308FA56C73651DE8138848 /* HotkeyMonitor.swift in Sources */,
 				3284F9A80F4E7D9A41A68141 /* KeychainHelper.swift in Sources */,
 				605FB988472C2B769FC41A8C /* PasteTargetInspector.swift in Sources */,
+				1FC7F9F995CCA498CFFD79EA /* PermissionService.swift in Sources */,
 				90D15C543DC56CC75F2DB9FF /* SetupWindow.swift in Sources */,
 				D3A988FE131D2292FCC3EC8B /* main.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
 /* End PBXSourcesBuildPhase section */
+
+/* Begin PBXTargetDependency section */
+		EAA6FB537CB2A20C45451223 /* PBXTargetDependency */ = {
+			isa = PBXTargetDependency;
+			target = 30D973287298264283F07674 /* GroqDictate */;
+			targetProxy = 3402815D56B59C6FBCFF84A4 /* PBXContainerItemProxy */;
+		};
+/* End PBXTargetDependency section */
 
 /* Begin XCBuildConfiguration section */
 		16BD69C4CEDF8216BD4D6082 /* Debug */ = {
@@ -272,6 +339,22 @@
 				SWIFT_ACTIVE_COMPILATION_CONDITIONS = DEBUG;
 				SWIFT_OPTIMIZATION_LEVEL = "-Onone";
 				SWIFT_VERSION = 5.9;
+			};
+			name = Debug;
+		};
+		563E17E753FC97D16D970A11 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				BUNDLE_LOADER = "$(TEST_HOST)";
+				COMBINE_HIDPI_IMAGES = YES;
+				GENERATE_INFOPLIST_FILE = YES;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/../Frameworks",
+					"@loader_path/../Frameworks",
+				);
+				SDKROOT = macosx;
+				TEST_HOST = "$(BUILT_PRODUCTS_DIR)/GroqDictate.app/Contents/MacOS/GroqDictate";
 			};
 			name = Debug;
 		};
@@ -381,9 +464,34 @@
 			};
 			name = Debug;
 		};
+		D4695AE355D8A155E4C35B41 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				BUNDLE_LOADER = "$(TEST_HOST)";
+				COMBINE_HIDPI_IMAGES = YES;
+				GENERATE_INFOPLIST_FILE = YES;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/../Frameworks",
+					"@loader_path/../Frameworks",
+				);
+				SDKROOT = macosx;
+				TEST_HOST = "$(BUILT_PRODUCTS_DIR)/GroqDictate.app/Contents/MacOS/GroqDictate";
+			};
+			name = Release;
+		};
 /* End XCBuildConfiguration section */
 
 /* Begin XCConfigurationList section */
+		0CA6CE30D37E7CC86AC25425 /* Build configuration list for PBXNativeTarget "GroqDictateTests" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				563E17E753FC97D16D970A11 /* Debug */,
+				D4695AE355D8A155E4C35B41 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Debug;
+		};
 		5B2C97BDD1FDC959C3B83585 /* Build configuration list for PBXNativeTarget "GroqDictate" */ = {
 			isa = XCConfigurationList;
 			buildConfigurations = (

@@ -61,6 +61,20 @@ enum AppStrings {
         static func keychainError(_ message: String) -> String { "Keychain error: \(message)" }
     }
 
+    enum Permissions {
+        static let microphoneDeniedTitle = "Microphone access required"
+        static let microphoneDeniedMessage = "Enable Microphone access for GroqDictate in System Settings > Privacy & Security."
+
+        static let accessibilityDeniedTitle = "Accessibility access required"
+        static let accessibilityDeniedMessage = "Enable Accessibility access for GroqDictate in System Settings > Privacy & Security."
+
+        static let inputMonitoringDeniedTitle = "Input Monitoring access required"
+        static let inputMonitoringDeniedMessage = "Enable Input Monitoring access for GroqDictate in System Settings > Privacy & Security."
+
+        static let openSystemSettings = "Open System Settings"
+        static let notNow = "Not now"
+    }
+
     enum Errors {
         static let micDenied = "Mic access denied"
         static let micError = "Mic error"

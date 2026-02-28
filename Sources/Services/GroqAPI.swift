@@ -241,7 +241,7 @@ enum GroqAPI {
         return text.isEmpty ? nil : text
     }
 
-    private static func mapHTTPError(status: Int, headers: HTTPURLResponse, body: Data) -> TranscriptionError {
+    static func mapHTTPError(status: Int, headers: HTTPURLResponse, body: Data) -> TranscriptionError {
         let message = parseAPIErrorMessage(from: body)
 
         switch status {
@@ -278,7 +278,7 @@ enum GroqAPI {
         }
     }
 
-    private static func parseAPIErrorMessage(from data: Data) -> String? {
+    static func parseAPIErrorMessage(from data: Data) -> String? {
         guard !data.isEmpty else { return nil }
 
         if

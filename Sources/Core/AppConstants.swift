@@ -4,7 +4,11 @@ enum AppConstants {
     enum URLs {
         static let groqAPIHost = URL(string: "https://api.groq.com")!
         static let groqTranscriptions = URL(string: "https://api.groq.com/openai/v1/audio/transcriptions")!
+
         static let microphonePrivacySettings = URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_Microphone")!
+        static let accessibilityPrivacySettings = URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility")!
+        static let inputMonitoringPrivacySettings = URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_ListenEvent")!
+
         static let projectGitHub = URL(string: "https://github.com/emmanuelchucks/GroqDictate")!
     }
 
