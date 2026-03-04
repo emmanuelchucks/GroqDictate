@@ -4,6 +4,11 @@ import Cocoa
 import ServiceManagement
 
 final class AppDelegate: NSObject, NSApplicationDelegate {
+    struct PostEventDeniedHandling: Equatable {
+        let shouldReactivateTargetOnDismiss: Bool
+        let noticeMessage: String
+    }
+
     enum ErrorKind {
         case retryable
         case tooLarge
@@ -290,7 +295,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
     }
 
-    private func presentPermissionGuidanceAlert(for action: PermissionService.GuidanceAction) {
+    @discardableResult
+    private func presentPermissionGuidanceAlert(for action: PermissionService.GuidanceAction) -> Bool {
         let alert = NSAlert()
         alert.alertStyle = .warning
 
@@ -301,6 +307,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         case .inputMonitoringDenied:
             alert.messageText = AppStrings.Permissions.inputMonitoringDeniedTitle
             alert.informativeText = AppStrings.Permissions.inputMonitoringDeniedMessage
+        case .postEventDenied:
+            alert.messageText = AppStrings.Permissions.postEventDeniedTitle
+            alert.informativeText = AppStrings.Permissions.postEventDeniedMessage
         }
 
         alert.addButton(withTitle: AppStrings.Permissions.openSystemSettings)
@@ -308,26 +317,28 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
         NSApp.activate(ignoringOtherApps: true)
         let response = alert.runModal()
-        guard response == .alertFirstButtonReturn else { return }
+        guard response == .alertFirstButtonReturn else { return false }
 
         switch action {
         case .accessibilityDenied:
             NSWorkspace.shared.open(AppConstants.URLs.accessibilityPrivacySettings)
         case .inputMonitoringDenied:
             NSWorkspace.shared.open(AppConstants.URLs.inputMonitoringPrivacySettings)
+        case .postEventDenied:
+            NSWorkspace.shared.open(AppConstants.URLs.postEventPrivacySettings)
         }
+
+        return true
     }
 
     private func handleHotkeyMonitorStartStatus(_ status: HotkeyMonitor.StartStatus) {
         switch status {
         case .ready:
-            AppLog.debug("hotkeys ready", category: .hotkey)
-        case .fallback:
-            AppLog.event("hotkeys running with fallback monitor", category: .hotkey)
-        case .listenDenied:
-            AppLog.event("hotkeys running with limited permissions (listen denied)", category: .hotkey)
+            AppLog.debug(status.startupDescription, category: .hotkey)
+        case .degraded:
+            AppLog.event(status.startupDescription, category: .hotkey)
         case .failed:
-            AppLog.error("hotkeys unavailable; app remains usable from menu", category: .hotkey)
+            AppLog.error("\(status.startupDescription); app remains usable from menu", category: .hotkey)
         }
     }
 
@@ -625,7 +636,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private func simulatePasteOrFallBackToClipboardNotice() {
         guard ensurePostEventAccessForSimulatedPaste() else {
             AppLog.event("post-event access unavailable; keeping transcription in clipboard", category: .app)
-            showTransientPanelNotice(AppStrings.Panel.copiedToClipboard, reactivateTargetOnDismiss: true)
+            handlePostEventPermissionDenied()
             return
         }
 
@@ -644,6 +655,34 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             let status = PermissionService.shared.requestPostEventAccess()
             return status == .granted || status == .unavailable
         }
+    }
+
+    private func handlePostEventPermissionDenied() {
+        let shouldPresentGuidance = Self.shouldPresentPostEventDeniedGuidance(
+            shownActions: shownPermissionGuidanceActions
+        )
+        var openedSystemSettings = false
+
+        if shouldPresentGuidance {
+            shownPermissionGuidanceActions.insert(.postEventDenied)
+            openedSystemSettings = presentPermissionGuidanceAlert(for: .postEventDenied)
+        }
+
+        let handling = Self.postEventDeniedHandling(openedSystemSettings: openedSystemSettings)
+        showTransientPanelNotice(handling.noticeMessage, reactivateTargetOnDismiss: handling.shouldReactivateTargetOnDismiss)
+    }
+
+    static func shouldPresentPostEventDeniedGuidance(
+        shownActions: Set<PermissionService.GuidanceAction>
+    ) -> Bool {
+        !shownActions.contains(.postEventDenied)
+    }
+
+    static func postEventDeniedHandling(openedSystemSettings: Bool) -> PostEventDeniedHandling {
+        PostEventDeniedHandling(
+            shouldReactivateTargetOnDismiss: !openedSystemSettings,
+            noticeMessage: AppStrings.Panel.copiedToClipboardAutoPasteDenied
+        )
     }
 
     private func simulatePaste() {

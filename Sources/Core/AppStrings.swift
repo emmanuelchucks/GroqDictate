@@ -38,6 +38,7 @@ enum AppStrings {
         static let recording = "● Recording"
         static let transcribing = "⟳ Transcribing…"
         static let copiedToClipboard = "✓ Copied to clipboard"
+        static let copiedToClipboardAutoPasteDenied = "✓ Copied to clipboard. Enable auto-paste in Accessibility."
         static let clipboardWriteFailed = "⚠ Clipboard unavailable"
         static let escCancel = "esc to cancel"
         static let escDismiss = "esc to dismiss"
@@ -52,7 +53,7 @@ enum AppStrings {
         static let modelLabel = "Model"
         static let micLabel = "Microphone"
         static let inputGainLabel = "Input Gain"
-        static let keyHint = "Free from console.groq.com → Stored in Keychain"
+        static let keyHint = "Free from console.groq.com → Stored in Keychain. Saving also starts permission setup."
         static let done = "Done"
         static let systemDefaultMic = "System Default"
 
@@ -63,13 +64,16 @@ enum AppStrings {
 
     enum Permissions {
         static let microphoneDeniedTitle = "Microphone access required"
-        static let microphoneDeniedMessage = "Enable Microphone access for GroqDictate in System Settings > Privacy & Security."
+        static let microphoneDeniedMessage = "Enable Microphone for GroqDictate in \(AppConstants.PermissionNavigation.microphone)."
 
         static let accessibilityDeniedTitle = "Accessibility access required"
-        static let accessibilityDeniedMessage = "Enable Accessibility access for GroqDictate in System Settings > Privacy & Security."
+        static let accessibilityDeniedMessage = "Enable Accessibility for GroqDictate in \(AppConstants.PermissionNavigation.accessibility) so it can inspect the focused field and participate in auto-paste."
 
         static let inputMonitoringDeniedTitle = "Input Monitoring access required"
-        static let inputMonitoringDeniedMessage = "Enable Input Monitoring access for GroqDictate in System Settings > Privacy & Security."
+        static let inputMonitoringDeniedMessage = "Enable Input Monitoring for GroqDictate in \(AppConstants.PermissionNavigation.inputMonitoring) for the most reliable global Right Command and Esc hotkeys."
+
+        static let postEventDeniedTitle = "Auto-paste permission required"
+        static let postEventDeniedMessage = "GroqDictate copied the transcription to your clipboard because macOS denied auto-paste (PostEvent). Enable GroqDictate in \(AppConstants.PermissionNavigation.postEvent) so it can send Command-V to the active app."
 
         static let openSystemSettings = "Open System Settings"
         static let notNow = "Not now"

@@ -25,6 +25,7 @@ final class PermissionService {
     enum GuidanceAction: Equatable, Hashable {
         case accessibilityDenied
         case inputMonitoringDenied
+        case postEventDenied
     }
 
     struct Snapshot: Equatable {

@@ -3,9 +3,26 @@ import Cocoa
 final class HotkeyMonitor {
     enum StartStatus: Equatable {
         case ready
-        case listenDenied
-        case fallback
+        case degraded(DegradedReason)
         case failed
+
+        enum DegradedReason: String, Equatable {
+            case listenEventDenied
+            case eventTapUnavailable
+        }
+
+        var startupDescription: String {
+            switch self {
+            case .ready:
+                return "ready: event tap active"
+            case .degraded(.listenEventDenied):
+                return "degraded: Input Monitoring denied; fallback monitors active with best-effort hotkeys"
+            case .degraded(.eventTapUnavailable):
+                return "degraded: event tap unavailable; fallback monitors active with best-effort hotkeys"
+            case .failed:
+                return "failed: no hotkey monitor available"
+            }
+        }
     }
 
     private enum KeyCode {
@@ -16,6 +33,8 @@ final class HotkeyMonitor {
     var onRightCommandPress: (() -> Void)?
     var onEscapePress: (() -> Void)?
     var shouldConsumeEscape: (() -> Bool)?
+
+    private let dispatchToMain: (@escaping () -> Void) -> Void
 
     private enum ListenEventAccessStatus {
         case granted
@@ -29,11 +48,15 @@ final class HotkeyMonitor {
     private var localMonitor: Any?
     private var rightCommandDown = false
 
+    init(dispatchToMain: @escaping (@escaping () -> Void) -> Void = { DispatchQueue.main.async(execute: $0) }) {
+        self.dispatchToMain = dispatchToMain
+    }
+
     @discardableResult
     func start() -> StartStatus {
         AppLog.debug("starting hotkey monitor", category: .hotkey)
         let status = installEventTapOrFallback()
-        AppLog.event("hotkey monitor start status=\(describe(status))", category: .hotkey)
+        AppLog.event("hotkey monitor start status=\(status.startupDescription)", category: .hotkey)
         return status
     }
 
@@ -50,14 +73,20 @@ final class HotkeyMonitor {
         case .granted:
             AppLog.debug("listen-event access granted", category: .hotkey)
         case .denied:
-            AppLog.event("listen-event access denied; skipping event tap and using fallback", category: .hotkey)
+            AppLog.event(
+                "listen-event access denied; degraded hotkey mode enabled with NSEvent fallback monitors",
+                category: .hotkey
+            )
             let fallbackInstalled = installNSEventFallback()
             if !fallbackInstalled {
                 AppLog.error("fallback monitor installation failed", category: .hotkey)
                 return .failed
             }
-            AppLog.event("fallback active with listen-event access denied", category: .hotkey)
-            return .listenDenied
+            AppLog.event(
+                "degraded hotkey mode active: Right Command and Esc remain best-effort and may still reach the focused app/system",
+                category: .hotkey
+            )
+            return .degraded(.listenEventDenied)
         case .unavailable:
             AppLog.debug("listen-event access API unavailable on this macOS version", category: .hotkey)
         }
@@ -79,7 +108,7 @@ final class HotkeyMonitor {
             },
             userInfo: selfPtr
         ) else {
-            AppLog.event("event tap unavailable, attempting NSEvent fallback", category: .hotkey)
+            AppLog.event("event tap unavailable; attempting degraded NSEvent fallback monitors", category: .hotkey)
             let fallbackInstalled = installNSEventFallback()
 
             if !fallbackInstalled {
@@ -87,8 +116,11 @@ final class HotkeyMonitor {
                 return .failed
             }
 
-            AppLog.event("fallback monitors active", category: .hotkey)
-            return .fallback
+            AppLog.event(
+                "degraded hotkey mode active: fallback monitors cannot suppress keys globally and may miss system-protected contexts",
+                category: .hotkey
+            )
+            return .degraded(.eventTapUnavailable)
         }
 
         AppLog.debug("event tap installed", category: .hotkey)
@@ -151,12 +183,12 @@ final class HotkeyMonitor {
 
         let keyCode = Int(event.getIntegerValueField(.keyboardEventKeycode))
 
-        if type == .keyDown, keyCode == KeyCode.escape, consumeEscape(logSuffix: "") {
+        if type == .keyDown, keyCode == KeyCode.escape, consumeEscapeIfNeeded(isFallback: false) {
             return nil
         }
 
         if type == .flagsChanged, keyCode == KeyCode.rightCommand {
-            let consumed = handleRightCommand(isDown: event.flags.contains(.maskCommand), logSuffix: "")
+            let consumed = handleRightCommandTransition(isDown: event.flags.contains(.maskCommand), isFallback: false)
             return consumed ? nil : Unmanaged.passUnretained(event)
         }
 
@@ -165,14 +197,14 @@ final class HotkeyMonitor {
 
     private func handleNSEvent(_ event: NSEvent) {
         if event.type == .keyDown, event.keyCode == KeyCode.escape {
-            _ = consumeEscape(logSuffix: " (fallback)")
+            _ = consumeEscapeIfNeeded(isFallback: true)
             return
         }
 
         guard event.type == .flagsChanged else { return }
 
         if event.keyCode == KeyCode.rightCommand {
-            _ = handleRightCommand(isDown: event.modifierFlags.contains(.command), logSuffix: " (fallback)")
+            _ = handleRightCommandTransition(isDown: event.modifierFlags.contains(.command), isFallback: true)
             return
         }
 
@@ -181,18 +213,34 @@ final class HotkeyMonitor {
         }
     }
 
-    private func consumeEscape(logSuffix: String) -> Bool {
+    @discardableResult
+    func consumeEscapeIfNeeded(isFallback: Bool) -> Bool {
         guard shouldConsumeEscape?() ?? false else { return false }
-        AppLog.debug("escape consumed\(logSuffix)", category: .hotkey)
-        DispatchQueue.main.async { [weak self] in self?.onEscapePress?() }
+        if isFallback {
+            AppLog.debug(
+                "escape handled in degraded hotkey mode; fallback monitors cannot suppress the key globally",
+                category: .hotkey
+            )
+        } else {
+            AppLog.debug("escape consumed", category: .hotkey)
+        }
+        dispatchToMain { [weak self] in self?.onEscapePress?() }
         return true
     }
 
-    private func handleRightCommand(isDown: Bool, logSuffix: String) -> Bool {
+    @discardableResult
+    func handleRightCommandTransition(isDown: Bool, isFallback: Bool) -> Bool {
         if isDown && !rightCommandDown {
             rightCommandDown = true
-            AppLog.debug("right command pressed\(logSuffix)", category: .hotkey)
-            DispatchQueue.main.async { [weak self] in self?.onRightCommandPress?() }
+            if isFallback {
+                AppLog.debug(
+                    "right command observed in degraded hotkey mode; fallback monitors cannot suppress the key globally",
+                    category: .hotkey
+                )
+            } else {
+                AppLog.debug("right command pressed", category: .hotkey)
+            }
+            dispatchToMain { [weak self] in self?.onRightCommandPress?() }
             return true
         }
 
@@ -207,18 +255,5 @@ final class HotkeyMonitor {
     private func preflightListenEventAccess() -> ListenEventAccessStatus {
         guard #available(macOS 10.15, *) else { return .unavailable }
         return CGPreflightListenEventAccess() ? .granted : .denied
-    }
-
-    private func describe(_ status: StartStatus) -> String {
-        switch status {
-        case .ready:
-            return "ready"
-        case .listenDenied:
-            return "listenDenied"
-        case .fallback:
-            return "fallback"
-        case .failed:
-            return "failed"
-        }
     }
 }

@@ -8,8 +8,18 @@ enum AppConstants {
         static let microphonePrivacySettings = URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_Microphone")!
         static let accessibilityPrivacySettings = URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility")!
         static let inputMonitoringPrivacySettings = URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_ListenEvent")!
+        static let postEventPrivacySettings = accessibilityPrivacySettings
 
         static let projectGitHub = URL(string: "https://github.com/emmanuelchucks/GroqDictate")!
+    }
+
+    enum PermissionNavigation {
+        private static let privacyAndSecurity = "System Settings > Privacy & Security"
+
+        static let microphone = "\(privacyAndSecurity) > Microphone"
+        static let accessibility = "\(privacyAndSecurity) > Accessibility"
+        static let inputMonitoring = "\(privacyAndSecurity) > Input Monitoring"
+        static let postEvent = accessibility
     }
 
     enum Accessibility {
