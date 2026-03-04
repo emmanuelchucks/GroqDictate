@@ -154,11 +154,13 @@ release:
 	xcrun stapler staple -v "$(SIGNED_APP)"; \
 	xcrun stapler validate -v "$(SIGNED_APP)"; \
 	spctl -a -vvv --type execute "$(SIGNED_APP)"; \
+	rm -f "$(ZIP_PATH)"; \
+	ditto -c -k --keepParent "$(SIGNED_APP)" "$(ZIP_PATH)"; \
 	if [ "$(DEBUG_PERSIST)" = "1" ]; then \
 		defaults write "$(BUNDLE_ID)" debug-logging-enabled -bool true; \
 		echo "✅ Persistent debug logging enabled"; \
 	fi; \
-	echo "✅ Release app ready: $(SIGNED_APP)"; \
+	echo "✅ Release artifacts ready: $(SIGNED_APP), $(ZIP_PATH)"; \
 	if [ "$(INSTALL)" = "1" ]; then \
 		mkdir -p "$$(dirname "$(APP_PATH)")"; \
 		pkill -x "$(APP_NAME)" >/dev/null 2>&1 || true; \
