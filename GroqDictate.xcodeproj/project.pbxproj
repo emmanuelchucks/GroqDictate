@@ -17,6 +17,8 @@
 		35308FA56C73651DE8138848 /* HotkeyMonitor.swift in Sources */ = {isa = PBXBuildFile; fileRef = 985FE6CA57E573D06BA367F7 /* HotkeyMonitor.swift */; };
 		605FB988472C2B769FC41A8C /* PasteTargetInspector.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6B0BE28EBDAD867F920D1D48 /* PasteTargetInspector.swift */; };
 		6E385F86CFC602FE270FC2A6 /* GroqAPI.swift in Sources */ = {isa = PBXBuildFile; fileRef = 418C95F8E57DAB14496A3BE0 /* GroqAPI.swift */; };
+		7872D7B24B610CC57A0341A8 /* HotkeyMonitorTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = C8E6EEEF18C888314FE719DF /* HotkeyMonitorTests.swift */; };
+		8096D868089502DD5157A84F /* AppDelegateLogicTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9E96B03453BAFE66AC19F725 /* AppDelegateLogicTests.swift */; };
 		8122FC7AC3FCE6A07CAF97FE /* GroqAPIErrorMessageParsingTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7A66A177F76658205803E732 /* GroqAPIErrorMessageParsingTests.swift */; };
 		90D15C543DC56CC75F2DB9FF /* SetupWindow.swift in Sources */ = {isa = PBXBuildFile; fileRef = 00DE7481DB590DF65091BA6E /* SetupWindow.swift */; };
 		CCF0C9CA70F08E9C93653280 /* Config.swift in Sources */ = {isa = PBXBuildFile; fileRef = 847D12320F149726245D2221 /* Config.swift */; };
@@ -54,6 +56,8 @@
 		946C9865B161C71D4E3DC512 /* AppStrings.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppStrings.swift; sourceTree = "<group>"; };
 		98175286F0C06E36428CBACC /* AboutDialog.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AboutDialog.swift; sourceTree = "<group>"; };
 		985FE6CA57E573D06BA367F7 /* HotkeyMonitor.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HotkeyMonitor.swift; sourceTree = "<group>"; };
+		9E96B03453BAFE66AC19F725 /* AppDelegateLogicTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppDelegateLogicTests.swift; sourceTree = "<group>"; };
+		C8E6EEEF18C888314FE719DF /* HotkeyMonitorTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HotkeyMonitorTests.swift; sourceTree = "<group>"; };
 		ECA808B7D1F99932D7A1D06E /* AppLog.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppLog.swift; sourceTree = "<group>"; };
 		F022DFD4D5E8FC315CC0523B /* GroqDictateTests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = GroqDictateTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
 		F06DBCC30E9F864A7CBAF146 /* AppConstants.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppConstants.swift; sourceTree = "<group>"; };
@@ -135,8 +139,10 @@
 		C3546C1AA45C4CF50E77B36A /* GroqDictateTests */ = {
 			isa = PBXGroup;
 			children = (
+				9E96B03453BAFE66AC19F725 /* AppDelegateLogicTests.swift */,
 				7A66A177F76658205803E732 /* GroqAPIErrorMessageParsingTests.swift */,
 				9307D51D1A9B56BAAFAC87CC /* GroqAPIHTTPErrorMappingTests.swift */,
+				C8E6EEEF18C888314FE719DF /* HotkeyMonitorTests.swift */,
 			);
 			name = GroqDictateTests;
 			path = Tests/GroqDictateTests;
@@ -241,8 +247,10 @@
 			isa = PBXSourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				8096D868089502DD5157A84F /* AppDelegateLogicTests.swift in Sources */,
 				8122FC7AC3FCE6A07CAF97FE /* GroqAPIErrorMessageParsingTests.swift in Sources */,
 				D5195607BD53132839E92A47 /* GroqAPIHTTPErrorMappingTests.swift in Sources */,
+				7872D7B24B610CC57A0341A8 /* HotkeyMonitorTests.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
