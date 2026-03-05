@@ -16,11 +16,26 @@ final class HotkeyMonitor {
             case .ready:
                 return "ready: event tap active"
             case .degraded(.listenEventDenied):
-                return "degraded: Input Monitoring denied; fallback monitors active with best-effort hotkeys"
+                return "degraded: Input Monitoring denied; NSEvent fallback monitors active"
             case .degraded(.eventTapUnavailable):
-                return "degraded: event tap unavailable; fallback monitors active with best-effort hotkeys"
+                return "degraded: event tap unavailable; NSEvent fallback monitors active"
             case .failed:
                 return "failed: no hotkey monitor available"
+            }
+        }
+
+        var limitationsDescription: String? {
+            switch self {
+            case .ready, .failed:
+                return nil
+            case .degraded(.listenEventDenied):
+                return """
+                degraded mode limitations: Input Monitoring is denied, so fallback monitors are best-effort only; Right Command and Esc may still reach the focused app, and Secure Input or other protected contexts can block detection entirely
+                """
+            case .degraded(.eventTapUnavailable):
+                return """
+                degraded mode limitations: the event tap is unavailable, so fallback monitors are best-effort only; Right Command and Esc may still reach the focused app, and Secure Input or other protected contexts can block detection entirely
+                """
             }
         }
     }
@@ -73,19 +88,11 @@ final class HotkeyMonitor {
         case .granted:
             AppLog.debug("listen-event access granted", category: .hotkey)
         case .denied:
-            AppLog.event(
-                "listen-event access denied; degraded hotkey mode enabled with NSEvent fallback monitors",
-                category: .hotkey
-            )
             let fallbackInstalled = installNSEventFallback()
             if !fallbackInstalled {
                 AppLog.error("fallback monitor installation failed", category: .hotkey)
                 return .failed
             }
-            AppLog.event(
-                "degraded hotkey mode active: Right Command and Esc remain best-effort and may still reach the focused app/system",
-                category: .hotkey
-            )
             return .degraded(.listenEventDenied)
         case .unavailable:
             AppLog.debug("listen-event access API unavailable on this macOS version", category: .hotkey)
@@ -115,11 +122,6 @@ final class HotkeyMonitor {
                 AppLog.error("fallback monitor installation failed", category: .hotkey)
                 return .failed
             }
-
-            AppLog.event(
-                "degraded hotkey mode active: fallback monitors cannot suppress keys globally and may miss system-protected contexts",
-                category: .hotkey
-            )
             return .degraded(.eventTapUnavailable)
         }
 

@@ -9,7 +9,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         let noticeMessage: String
     }
 
-    enum ErrorKind {
+    enum ErrorKind: Equatable {
         case retryable
         case tooLarge
         case invalidKey
@@ -18,12 +18,32 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         case other
     }
 
-    enum DictationState {
+    enum DictationState: Equatable {
         case idle
         case recording
         case processing
         case notice
         case error(ErrorKind)
+    }
+
+    enum ToggleAction: Equatable {
+        case startRecording
+        case stopAndTranscribe
+        case handleError(ErrorKind)
+        case ignore
+    }
+
+    enum EscapeAction: Equatable {
+        case cancelActiveWork
+        case dismissNotice
+        case dismissError
+        case ignore
+    }
+
+    enum PasteDisposition: Equatable {
+        case clipboardWriteFailed
+        case autoPaste
+        case clipboardOnly
     }
 
     private var state: DictationState = .idle
@@ -337,6 +357,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             AppLog.debug(status.startupDescription, category: .hotkey)
         case .degraded:
             AppLog.event(status.startupDescription, category: .hotkey)
+            if let limitations = status.limitationsDescription {
+                AppLog.event(limitations, category: .hotkey)
+            }
         case .failed:
             AppLog.error("\(status.startupDescription); app remains usable from menu", category: .hotkey)
         }
@@ -344,28 +367,28 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     private func toggle() {
         AppLog.debug("toggle received in state=\(describe(state))", category: .hotkey)
-        switch state {
-        case .idle:
+        switch Self.toggleAction(for: state) {
+        case .startRecording:
             startRecording()
-        case .recording:
+        case .stopAndTranscribe:
             stopAndTranscribe()
-        case .processing, .notice:
-            break
-        case .error(let kind):
+        case .handleError(let kind):
             handleErrorAction(kind)
+        case .ignore:
+            break
         }
     }
 
     private func handleEscape() {
         AppLog.debug("escape received in state=\(describe(state))", category: .hotkey)
-        switch state {
-        case .recording, .processing:
+        switch Self.escapeAction(for: state) {
+        case .cancelActiveWork:
             cancel()
-        case .notice:
+        case .dismissNotice:
             dismissNotice()
-        case .error:
+        case .dismissError:
             dismissError()
-        case .idle:
+        case .ignore:
             break
         }
     }
@@ -404,18 +427,21 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
         recorder.stop { [weak self] fileURL in
             guard let self else { return }
-            guard case .processing = state else { return }
+            guard Self.shouldHandleRecorderStopCallback(for: self.state) else {
+                AppLog.debug("ignoring late recorder stop callback after state reset", category: .audio)
+                return
+            }
             AppLog.debug("audio captured at \(fileURL.path)", category: .audio)
-            lastAudioFileURL = fileURL
+            self.lastAudioFileURL = fileURL
 
             guard let config = Config.load() else {
-                recorder.cleanup()
-                lastAudioFileURL = nil
-                showError(kind: .invalidKey, message: AppStrings.Errors.invalidKey, action: .settings)
+                self.recorder.cleanup()
+                self.lastAudioFileURL = nil
+                self.showError(kind: .invalidKey, message: AppStrings.Errors.invalidKey, action: .settings)
                 return
             }
 
-            transcribe(fileURL: fileURL, config: config)
+            self.transcribe(fileURL: fileURL, config: config)
         }
     }
 
@@ -424,7 +450,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         GroqAPI.transcribe(fileURL: fileURL, config: config) { [weak self] result in
             DispatchQueue.main.async {
                 guard let self else { return }
-                guard case .processing = self.state else { return }
+                guard Self.shouldHandleTranscriptionCallback(for: self.state) else {
+                    AppLog.debug("ignoring late transcription callback after state reset", category: .network)
+                    return
+                }
 
                 switch result {
                 case .success(let text):
@@ -545,13 +574,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private func pasteText(_ text: String) {
         AppLog.debug("pasting transcription chars=\(text.count) target=\(describe(dictationTargetApp))", category: .app)
 
-        guard writeToClipboard(text) else {
+        switch Self.pasteDisposition(
+            clipboardWriteSucceeded: writeToClipboard(text),
+            canAutoPaste: pasteTargetInspector.canAutoPaste(into: dictationTargetApp)
+        ) {
+        case .clipboardWriteFailed:
             AppLog.error("failed to write transcription to clipboard", category: .app)
             showTransientPanelNotice(AppStrings.Panel.clipboardWriteFailed)
-            return
-        }
-
-        if pasteTargetInspector.canAutoPaste(into: dictationTargetApp) {
+        case .autoPaste:
             panel.dismiss()
             transition(to: .idle, reason: "transcription pasted")
             focusTracker.reactivate(dictationTargetApp)
@@ -559,11 +589,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             DispatchQueue.main.asyncAfter(deadline: .now() + AppConstants.Timing.simulatedPasteDelay) { [weak self] in
                 self?.simulatePasteOrFallBackToClipboardNotice()
             }
-            return
+        case .clipboardOnly:
+            AppLog.debug("focused element not pasteable; keeping transcription in clipboard", category: .focus)
+            showTransientPanelNotice(AppStrings.Panel.copiedToClipboard, reactivateTargetOnDismiss: true)
         }
-
-        AppLog.debug("focused element not pasteable; keeping transcription in clipboard", category: .focus)
-        showTransientPanelNotice(AppStrings.Panel.copiedToClipboard, reactivateTargetOnDismiss: true)
     }
 
     private func writeToClipboard(_ text: String) -> Bool {
@@ -676,6 +705,51 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         shownActions: Set<PermissionService.GuidanceAction>
     ) -> Bool {
         !shownActions.contains(.postEventDenied)
+    }
+
+    static func toggleAction(for state: DictationState) -> ToggleAction {
+        switch state {
+        case .idle:
+            return .startRecording
+        case .recording:
+            return .stopAndTranscribe
+        case .processing, .notice:
+            return .ignore
+        case .error(let kind):
+            return .handleError(kind)
+        }
+    }
+
+    static func escapeAction(for state: DictationState) -> EscapeAction {
+        switch state {
+        case .recording, .processing:
+            return .cancelActiveWork
+        case .notice:
+            return .dismissNotice
+        case .error:
+            return .dismissError
+        case .idle:
+            return .ignore
+        }
+    }
+
+    static func shouldHandleRecorderStopCallback(for state: DictationState) -> Bool {
+        if case .processing = state {
+            return true
+        }
+        return false
+    }
+
+    static func shouldHandleTranscriptionCallback(for state: DictationState) -> Bool {
+        if case .processing = state {
+            return true
+        }
+        return false
+    }
+
+    static func pasteDisposition(clipboardWriteSucceeded: Bool, canAutoPaste: Bool) -> PasteDisposition {
+        guard clipboardWriteSucceeded else { return .clipboardWriteFailed }
+        return canAutoPaste ? .autoPaste : .clipboardOnly
     }
 
     static func postEventDeniedHandling(openedSystemSettings: Bool) -> PostEventDeniedHandling {

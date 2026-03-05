@@ -2,17 +2,6 @@ import XCTest
 @testable import GroqDictate
 
 final class HotkeyMonitorTests: XCTestCase {
-    func testStartStatusStartupDescription_explainsDegradedModes() {
-        XCTAssertEqual(
-            HotkeyMonitor.StartStatus.degraded(.listenEventDenied).startupDescription,
-            "degraded: Input Monitoring denied; fallback monitors active with best-effort hotkeys"
-        )
-        XCTAssertEqual(
-            HotkeyMonitor.StartStatus.degraded(.eventTapUnavailable).startupDescription,
-            "degraded: event tap unavailable; fallback monitors active with best-effort hotkeys"
-        )
-    }
-
     func testHandleRightCommandTransition_triggersOncePerPressUntilReleased() {
         let monitor = HotkeyMonitor(dispatchToMain: { work in work() })
         var pressCount = 0

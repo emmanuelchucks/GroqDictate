@@ -53,7 +53,7 @@ enum AppStrings {
         static let modelLabel = "Model"
         static let micLabel = "Microphone"
         static let inputGainLabel = "Input Gain"
-        static let keyHint = "Free from console.groq.com → Stored in Keychain. Saving also starts permission setup."
+        static let keyHint = "Free from console.groq.com → Stored in Keychain."
         static let done = "Done"
         static let systemDefaultMic = "System Default"
 

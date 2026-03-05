@@ -2,6 +2,8 @@ import Cocoa
 
 final class SetupWindow: NSWindow, NSWindowDelegate {
     private static let systemDefaultMicToken = "__system_default__"
+    private static let contentWidth: CGFloat = 460
+    private static let contentHeight: CGFloat = 360
 
     private let apiKeyField = NSSecureTextField()
     private let micPopup = NSPopUpButton()
@@ -17,13 +19,14 @@ final class SetupWindow: NSWindow, NSWindowDelegate {
 
     init() {
         super.init(
-            contentRect: NSRect(x: 0, y: 0, width: 460, height: 360),
+            contentRect: NSRect(x: 0, y: 0, width: Self.contentWidth, height: Self.contentHeight),
             styleMask: [.titled, .closable],
             backing: .buffered,
             defer: false
         )
         title = AppStrings.Setup.title
         isReleasedWhenClosed = false
+        setContentSize(NSSize(width: Self.contentWidth, height: Self.contentHeight))
         delegate = self
         buildUI()
         center()
@@ -35,14 +38,9 @@ final class SetupWindow: NSWindow, NSWindowDelegate {
     }
 
     private func buildUI() {
-        let container = NSView(frame: NSRect(x: 0, y: 0, width: 460, height: 360))
+        let container = NSView()
         contentView = container
 
-        var y: CGFloat = 320
-
-        addLabel(AppStrings.Setup.apiKeyLabel, at: &y, in: container, bold: true)
-        y -= 4
-        apiKeyField.frame = NSRect(x: 24, y: y, width: 412, height: 22)
         apiKeyField.font = .monospacedSystemFont(ofSize: 12, weight: .regular)
         apiKeyField.placeholderString = "gsk_..."
         apiKeyField.usesSingleLineMode = true
@@ -52,31 +50,18 @@ final class SetupWindow: NSWindow, NSWindowDelegate {
         if let existing = KeychainHelper.load(key: Config.KeychainKey.apiKey) {
             apiKeyField.stringValue = existing
         }
-        container.addSubview(apiKeyField)
-        y -= 16
 
         let hint = NSTextField(labelWithString: AppStrings.Setup.keyHint)
         hint.font = .systemFont(ofSize: 10)
         hint.textColor = .tertiaryLabelColor
-        hint.frame = NSRect(x: 24, y: y, width: 412, height: 14)
-        container.addSubview(hint)
-        y -= 28
 
-        addLabel(AppStrings.Setup.modelLabel, at: &y, in: container, bold: true)
-        y -= 4
-        modelPopup.frame = NSRect(x: 24, y: y, width: 412, height: 26)
         let savedModel = UserDefaults.standard.string(forKey: Config.DefaultsKey.model) ?? Config.DefaultValue.model
         for (index, model) in Config.modelOptions.enumerated() {
             modelPopup.addItem(withTitle: model.title)
             modelPopup.item(at: index)?.representedObject = model.id
             if model.id == savedModel { modelPopup.selectItem(at: index) }
         }
-        container.addSubview(modelPopup)
-        y -= 34
 
-        addLabel(AppStrings.Setup.micLabel, at: &y, in: container, bold: true)
-        y -= 4
-        micPopup.frame = NSRect(x: 24, y: y, width: 412, height: 26)
         micPopup.addItem(withTitle: AppStrings.Setup.systemDefaultMic)
         micPopup.item(at: 0)?.representedObject = Self.systemDefaultMicToken
 
@@ -92,46 +77,91 @@ final class SetupWindow: NSWindow, NSWindowDelegate {
             if device.uid == savedMic { selectedIndex = idx }
         }
         micPopup.selectItem(at: selectedIndex)
-        container.addSubview(micPopup)
-        y -= 34
-
-        addLabel(AppStrings.Setup.inputGainLabel, at: &y, in: container, bold: true)
-        y -= 4
 
         let savedGain = UserDefaults.standard.float(forKey: Config.DefaultsKey.inputGain)
         let currentGain = savedGain > 0 ? savedGain : Config.DefaultValue.inputGain
 
-        gainSlider.frame = NSRect(x: 24, y: y, width: 346, height: 22)
         gainSlider.minValue = 1.0
         gainSlider.maxValue = 5.0
         gainSlider.doubleValue = Double(currentGain)
         gainSlider.target = self
         gainSlider.action = #selector(gainChanged)
-        container.addSubview(gainSlider)
 
-        gainLabel.frame = NSRect(x: 378, y: y, width: 60, height: 22)
         gainLabel.font = .monospacedDigitSystemFont(ofSize: 13, weight: .medium)
         gainLabel.stringValue = String(format: "%.1fx", currentGain)
-        container.addSubview(gainLabel)
-
-        statusLabel.frame = NSRect(x: 24, y: 20, width: 280, height: 20)
         statusLabel.font = .systemFont(ofSize: 11)
-        container.addSubview(statusLabel)
 
         let doneButton = NSButton(title: AppStrings.Setup.done, target: self, action: #selector(save))
         doneButton.bezelStyle = .rounded
         doneButton.keyEquivalent = "\r"
-        doneButton.frame = NSRect(x: 336, y: 14, width: 104, height: 32)
-        container.addSubview(doneButton)
+        doneButton.setContentHuggingPriority(.required, for: .horizontal)
+        doneButton.widthAnchor.constraint(equalToConstant: 104).isActive = true
+
+        let gainRow = NSStackView(views: [gainSlider, gainLabel])
+        gainRow.orientation = .horizontal
+        gainRow.alignment = .centerY
+        gainRow.spacing = 8
+        gainLabel.widthAnchor.constraint(equalToConstant: 60).isActive = true
+
+        let spacer = NSView()
+        spacer.setContentHuggingPriority(.defaultLow, for: .horizontal)
+
+        let footerRow = NSStackView(views: [statusLabel, spacer, doneButton])
+        footerRow.orientation = .horizontal
+        footerRow.alignment = .centerY
+        footerRow.spacing = 12
+
+        let filler = NSView()
+        filler.setContentHuggingPriority(.defaultLow, for: .vertical)
+        filler.setContentCompressionResistancePriority(.defaultLow, for: .vertical)
+
+        let rootStack = NSStackView(views: [
+            makeSection(
+                title: AppStrings.Setup.apiKeyLabel,
+                views: [apiKeyField, hint]
+            ),
+            makeSection(title: AppStrings.Setup.modelLabel, views: [modelPopup]),
+            makeSection(title: AppStrings.Setup.micLabel, views: [micPopup]),
+            makeSection(title: AppStrings.Setup.inputGainLabel, views: [gainRow]),
+            filler,
+            footerRow
+        ])
+        rootStack.orientation = .vertical
+        rootStack.alignment = .leading
+        rootStack.spacing = 16
+        rootStack.translatesAutoresizingMaskIntoConstraints = false
+
+        container.addSubview(rootStack)
+
+        for arrangedSubview in rootStack.arrangedSubviews {
+            arrangedSubview.translatesAutoresizingMaskIntoConstraints = false
+            arrangedSubview.widthAnchor.constraint(equalTo: rootStack.widthAnchor).isActive = true
+        }
+
+        NSLayoutConstraint.activate([
+            rootStack.topAnchor.constraint(equalTo: container.topAnchor, constant: 20),
+            rootStack.leadingAnchor.constraint(equalTo: container.leadingAnchor, constant: 24),
+            rootStack.trailingAnchor.constraint(equalTo: container.trailingAnchor, constant: -20),
+            rootStack.bottomAnchor.constraint(equalTo: container.bottomAnchor, constant: -14)
+        ])
     }
 
-    private func addLabel(_ text: String, at y: inout CGFloat, in container: NSView, bold: Bool) {
-        let label = NSTextField(labelWithString: text)
-        label.font = bold ? .systemFont(ofSize: 13, weight: .semibold) : .systemFont(ofSize: 13)
+    private func makeSection(title: String, views: [NSView]) -> NSStackView {
+        let label = NSTextField(labelWithString: title)
+        label.font = .systemFont(ofSize: 13, weight: .semibold)
         label.textColor = .labelColor
-        label.frame = NSRect(x: 24, y: y, width: 412, height: 18)
-        container.addSubview(label)
-        y -= 20
+
+        let stack = NSStackView(views: [label] + views)
+        stack.orientation = .vertical
+        stack.alignment = .leading
+        stack.spacing = 4
+
+        for view in views {
+            view.translatesAutoresizingMaskIntoConstraints = false
+            view.widthAnchor.constraint(equalTo: stack.widthAnchor).isActive = true
+        }
+
+        return stack
     }
 
     @objc private func gainChanged() {
