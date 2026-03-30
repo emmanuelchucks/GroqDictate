@@ -55,11 +55,13 @@ make dev
 
 `project.yml` is the source of truth for the Xcode project. Regenerate `GroqDictate.xcodeproj` with `make generate` after changing targets or build settings.
 
-Clean-room run:
+Fresh local run with reset:
 
 ```bash
 make dev RESET=1 FORCE=1
 ```
+
+This clears app-owned local state, temporary recordings/uploads, preferences, keychain API key, diagnostics, and privacy grants. macOS-managed Login Items entries may still need to be removed manually in System Settings.
 
 Enable persistent debug diagnostics:
 

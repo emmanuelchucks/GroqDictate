@@ -137,18 +137,21 @@ reset:
 	rm -f "$${HOME}/Library/Preferences/$(BUNDLE_ID).plist"; \
 	rm -rf "$${HOME}/Library/Caches/$(BUNDLE_ID)"; \
 	rm -rf "$${HOME}/Library/HTTPStorages/$(BUNDLE_ID)"; \
+	rm -f "$${HOME}/Library/HTTPStorages/$(BUNDLE_ID).binarycookies"; \
 	rm -rf "$${HOME}/Library/Saved Application State/$(BUNDLE_ID).savedState"; \
 	rm -rf "$${HOME}/Library/Logs/$(APP_NAME)"; \
 	rm -rf "$${HOME}/Library/Application Support/$(APP_NAME)"; \
 	rm -rf "$${HOME}/Library/Application Support/$(BUNDLE_ID)"; \
 	security delete-generic-password -s "$(KEYCHAIN_SERVICE)" -a "$(KEYCHAIN_ACCOUNT)" >/dev/null 2>&1 || true; \
 	rm -f "$${TMPDIR:-/tmp}/groqdictate"*.wav "$${TMPDIR:-/tmp}/groqdictate"*.flac; \
+	rm -f "$${TMPDIR:-/tmp}/groqdictate-upload-"*.multipart; \
+	rm -rf "$${TMPDIR:-/tmp}/groqdictate-recordings"; \
 	tccutil reset Microphone "$(BUNDLE_ID)" >/dev/null 2>&1 || true; \
 	tccutil reset Accessibility "$(BUNDLE_ID)" >/dev/null 2>&1 || true; \
 	tccutil reset ListenEvent "$(BUNDLE_ID)" >/dev/null 2>&1 || true; \
 	tccutil reset PostEvent "$(BUNDLE_ID)" >/dev/null 2>&1 || true; \
 	echo "✅ Local app state reset complete for $(BUNDLE_ID)"; \
-	echo "ℹ️  If login/background entries remain, remove them in System Settings → General → Login Items"
+	echo "ℹ️  macOS-managed login/background entries may remain; remove them in System Settings → General → Login Items"
 
 dev:
 	@set -euo pipefail; \
