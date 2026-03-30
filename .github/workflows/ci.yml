@@ -5,31 +5,7 @@ on:
   pull_request:
 
 jobs:
-  build:
-    runs-on: macos-15
-    strategy:
-      fail-fast: false
-      matrix:
-        configuration: [Debug, Release]
-
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-
-      - name: Show Xcode version
-        run: xcodebuild -version
-
-      - name: Build (${{ matrix.configuration }})
-        run: |
-          xcodebuild \
-            -project GroqDictate.xcodeproj \
-            -scheme GroqDictate \
-            -configuration "${{ matrix.configuration }}" \
-            -destination 'platform=macOS' \
-            CODE_SIGNING_ALLOWED=NO \
-            build
-
-  test:
+  ci:
     runs-on: macos-15
 
     steps:
@@ -39,12 +15,22 @@ jobs:
       - name: Show Xcode version
         run: xcodebuild -version
 
-      - name: Test (Debug)
+      - name: Install XcodeGen
+        env:
+          HOMEBREW_NO_AUTO_UPDATE: "1"
         run: |
-          xcodebuild \
-            -project GroqDictate.xcodeproj \
-            -scheme GroqDictate \
-            -configuration Debug \
-            -destination 'platform=macOS' \
-            CODE_SIGNING_ALLOWED=NO \
-            test
+          if ! command -v xcodegen >/dev/null 2>&1; then
+            brew install xcodegen
+          fi
+          xcodegen --version
+
+      - name: Run CI
+        run: make ci
+
+      - name: Upload xcresult
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: GroqDictate-xcresult
+          path: .build/TestResults/GroqDictate.xcresult
+          if-no-files-found: ignore

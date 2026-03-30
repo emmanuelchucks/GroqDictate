@@ -41,14 +41,19 @@ If auto-paste (PostEvent) is denied, GroqDictate copies the transcript to clipbo
 ### Requirements
 
 - macOS 14+
-- Xcode 16+ (with Command Line Tools)
+- Xcode 26.x (validated on Xcode 26.3, with Command Line Tools)
+- XcodeGen 2.45+
 
 ### Common commands
 
 ```bash
 make doctor
+make generate
+make ci
 make dev
 ```
+
+`project.yml` is the source of truth for the Xcode project. Regenerate `GroqDictate.xcodeproj` with `make generate` after changing targets or build settings.
 
 Clean-room run:
 
@@ -56,16 +61,16 @@ Clean-room run:
 make dev RESET=1 FORCE=1
 ```
 
-Enable persistent debug logs:
+Enable persistent debug diagnostics:
 
 ```bash
 make dev RESET=1 FORCE=1 DEBUG_PERSIST=1
 ```
 
-Debug log path:
+Structured diagnostics journal:
 
 ```text
-~/Library/Logs/GroqDictate/app.log
+~/Library/Application Support/GroqDictate/Diagnostics/diagnostics.jsonl
 ```
 
 ### Release build

@@ -13,10 +13,13 @@ DIST_DIR := dist
 HOST_ARCH := $(shell uname -m)
 DEV_DESTINATION := platform=macOS,arch=$(HOST_ARCH)
 RELEASE_DESTINATION := generic/platform=macOS
+CI_DESTINATION := platform=macOS
 
 DEBUG_APP := $(DERIVED_DATA)/Build/Products/Debug/$(APP_NAME).app
 DEBUG_EXECUTABLE := $(DEBUG_APP)/Contents/MacOS/$(APP_NAME)
 RELEASE_APP_UNSIGNED := $(DERIVED_DATA)/Build/Products/Release/$(APP_NAME).app
+CI_RESULT_DIR := $(BUILD_ROOT)/TestResults
+CI_RESULT_BUNDLE := $(CI_RESULT_DIR)/$(APP_NAME).xcresult
 
 APP_PATH ?= /Applications/$(APP_NAME).app
 INSTALLED_EXECUTABLE := $(APP_PATH)/Contents/MacOS/$(APP_NAME)
@@ -27,20 +30,25 @@ ENTITLEMENTS_FILE := GroqDictate/GroqDictate.entitlements
 
 DEVELOPER_ID_APP ?=
 NOTARY_PROFILE ?=
+DEVELOPMENT_TEAM ?= G729H95F8U
 KEYCHAIN_SERVICE ?= $(BUNDLE_ID)
 KEYCHAIN_ACCOUNT ?= groq-api-key
+CI_SIGNING_FLAGS := CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO CODE_SIGN_IDENTITY=
 
 # Optional behavior flags
 RESET ?= 0
 INSTALL ?= 0
 DEBUG_PERSIST ?= 0
 
-.PHONY: help doctor clean reset dev release
+.PHONY: help doctor clean reset generate verify-generated-project ci dev release
 
 help:
 	@echo "GroqDictate pipeline (simplified)"
 	@echo ""
 	@echo "Core commands:"
+	@echo "  make generate               Regenerate $(PROJECT) from project.yml"
+	@echo "  make verify-generated-project  Ensure committed $(PROJECT) matches project.yml"
+	@echo "  make ci                     Regenerate, verify, test, and unsigned Release build"
 	@echo "  make dev                     Build Debug, install to /Applications, run"
 	@echo "  make release                Build Release, sign, notarize, verify"
 	@echo "  make reset FORCE=1          Remove local app/system traces for clean testing"
@@ -63,10 +71,53 @@ help:
 doctor:
 	@set -euo pipefail; \
 	xcodebuild -version; \
+	xcodegen --version; \
 	xcrun --find notarytool >/dev/null; \
 	xcrun --find stapler >/dev/null; \
 	codesign --version; \
 	spctl --version || true
+
+generate:
+	@xcodegen generate
+
+verify-generated-project:
+	@set -euo pipefail; \
+	tmp_dir="$$(mktemp -d)"; \
+	cp -R "$(PROJECT)" "$$tmp_dir/$(PROJECT)"; \
+	trap 'rm -rf "$$tmp_dir"' EXIT; \
+	$(MAKE) --no-print-directory generate; \
+	diff -qr "$$tmp_dir/$(PROJECT)" "$(PROJECT)" >/dev/null || { \
+		echo "❌ $(PROJECT) is out of date with project.yml"; \
+		echo "Run 'xcodegen generate' and commit the generated project changes."; \
+		git --no-pager diff --no-index -- "$$tmp_dir/$(PROJECT)" "$(PROJECT)" || true; \
+		exit 1; \
+	}; \
+	echo "✅ Generated project matches project.yml"
+
+ci:
+	@set -euo pipefail; \
+	$(MAKE) --no-print-directory verify-generated-project; \
+	rm -rf "$(CI_RESULT_DIR)"; \
+	mkdir -p "$(CI_RESULT_DIR)"; \
+	xcodebuild \
+		-project "$(PROJECT)" \
+		-scheme "$(SCHEME)" \
+		-configuration Debug \
+		-destination "$(CI_DESTINATION)" \
+		-derivedDataPath "$(DERIVED_DATA)" \
+		-resultBundlePath "$(CI_RESULT_BUNDLE)" \
+		$(CI_SIGNING_FLAGS) \
+		test; \
+	xcodebuild \
+		-project "$(PROJECT)" \
+		-scheme "$(SCHEME)" \
+		-configuration Release \
+		-destination "$(RELEASE_DESTINATION)" \
+		-derivedDataPath "$(DERIVED_DATA)" \
+		$(CI_SIGNING_FLAGS) \
+		build; \
+	test -d "$(CI_RESULT_BUNDLE)" || { echo "❌ Missing xcresult bundle at $(CI_RESULT_BUNDLE)"; exit 1; }; \
+	echo "✅ CI validation complete"
 
 clean:
 	@rm -rf "$(BUILD_ROOT)" "$(DIST_DIR)"
@@ -105,9 +156,7 @@ dev:
 		-configuration Debug \
 		-destination "$(DEV_DESTINATION)" \
 		-derivedDataPath "$(DERIVED_DATA)" \
-		CODE_SIGNING_ALLOWED=NO \
-		CODE_SIGNING_REQUIRED=NO \
-		CODE_SIGN_IDENTITY="" \
+		DEVELOPMENT_TEAM="$(DEVELOPMENT_TEAM)" \
 		-quiet; \
 	test -d "$(DEBUG_APP)" || { echo "❌ Debug build output missing"; exit 1; }; \
 	mkdir -p "$$(dirname "$(APP_PATH)")"; \
