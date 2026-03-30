@@ -23,7 +23,7 @@ struct Config {
         static let inputGain: Float = 5.0
     }
 
-    struct ModelOption {
+    struct ModelOption: Equatable {
         let id: String
         let title: String
     }

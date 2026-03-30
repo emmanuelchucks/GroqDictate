@@ -5,6 +5,8 @@ final class SetupWindow: NSWindow, NSWindowDelegate {
     private static let contentWidth: CGFloat = 460
     private static let contentHeight: CGFloat = 360
 
+    private let configurationController: SetupConfigurationController
+    private let initialState: SetupConfigurationState
     private let apiKeyField = NSSecureTextField()
     private let micPopup = NSPopUpButton()
     private let modelPopup = NSPopUpButton()
@@ -17,7 +19,9 @@ final class SetupWindow: NSWindow, NSWindowDelegate {
 
     private var didSave = false
 
-    init() {
+    init(configurationController: SetupConfigurationController = SetupConfigurationController()) {
+        self.configurationController = configurationController
+        self.initialState = configurationController.makeState()
         super.init(
             contentRect: NSRect(x: 0, y: 0, width: Self.contentWidth, height: Self.contentHeight),
             styleMask: [.titled, .closable],
@@ -47,39 +51,31 @@ final class SetupWindow: NSWindow, NSWindowDelegate {
         apiKeyField.lineBreakMode = .byTruncatingTail
         apiKeyField.cell?.wraps = false
         apiKeyField.cell?.isScrollable = true
-        if let existing = KeychainHelper.load(key: Config.KeychainKey.apiKey) {
-            apiKeyField.stringValue = existing
-        }
+        apiKeyField.stringValue = initialState.existingAPIKey
 
         let hint = NSTextField(labelWithString: AppStrings.Setup.keyHint)
         hint.font = .systemFont(ofSize: 10)
         hint.textColor = .tertiaryLabelColor
 
-        let savedModel = UserDefaults.standard.string(forKey: Config.DefaultsKey.model) ?? Config.DefaultValue.model
-        for (index, model) in Config.modelOptions.enumerated() {
+        for (index, model) in initialState.modelOptions.enumerated() {
             modelPopup.addItem(withTitle: model.title)
             modelPopup.item(at: index)?.representedObject = model.id
-            if model.id == savedModel { modelPopup.selectItem(at: index) }
+            if model.id == initialState.selectedModelID { modelPopup.selectItem(at: index) }
         }
 
         micPopup.addItem(withTitle: AppStrings.Setup.systemDefaultMic)
         micPopup.item(at: 0)?.representedObject = Self.systemDefaultMicToken
 
-        let savedMic = UserDefaults.standard.string(forKey: Config.DefaultsKey.micUID) ?? ""
         var selectedIndex = 0
-        for device in AudioRecorder.availableInputDevices() {
-            if device.uid.contains("CADefaultDeviceAggregate") || device.name.contains("CADefaultDevice") {
-                continue
-            }
+        for option in initialState.microphoneOptions {
             let idx = micPopup.numberOfItems
-            micPopup.addItem(withTitle: device.name)
-            micPopup.item(at: idx)?.representedObject = device.uid
-            if device.uid == savedMic { selectedIndex = idx }
+            micPopup.addItem(withTitle: option.title)
+            micPopup.item(at: idx)?.representedObject = option.id
+            if option.id == initialState.selectedMicrophoneID { selectedIndex = idx }
         }
         micPopup.selectItem(at: selectedIndex)
 
-        let savedGain = UserDefaults.standard.float(forKey: Config.DefaultsKey.inputGain)
-        let currentGain = savedGain > 0 ? savedGain : Config.DefaultValue.inputGain
+        let currentGain = initialState.inputGain
 
         gainSlider.minValue = 1.0
         gainSlider.maxValue = 5.0
@@ -169,29 +165,26 @@ final class SetupWindow: NSWindow, NSWindowDelegate {
     }
 
     @objc private func save() {
-        let key = apiKeyField.stringValue.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !key.isEmpty else {
+        let request = SetupSaveRequest(
+            apiKey: apiKeyField.stringValue,
+            selectedModelID: (modelPopup.selectedItem?.representedObject as? String) ?? Config.DefaultValue.model,
+            selectedMicrophoneID: (micPopup.selectedItem?.representedObject as? String).flatMap {
+                $0 == Self.systemDefaultMicToken ? nil : $0
+            },
+            inputGain: Float(gainSlider.doubleValue)
+        )
+
+        switch configurationController.save(request) {
+        case .success:
+            didSave = true
+            close()
+        case .failure(.emptyAPIKey):
             showStatus(AppStrings.Setup.keyEmpty, isError: true)
-            return
-        }
-        guard key.hasPrefix("gsk_") else {
+        case .failure(.invalidAPIKey):
             showStatus(AppStrings.Setup.keyInvalid, isError: true)
-            return
+        case .failure(.keychainFailure(let message)):
+            showStatus(AppStrings.Setup.keychainError(message), isError: true)
         }
-
-        do {
-            try Config.saveAPIKey(key)
-        } catch {
-            showStatus(AppStrings.Setup.keychainError(error.localizedDescription), isError: true)
-            return
-        }
-
-        let selectedModel = (modelPopup.selectedItem?.representedObject as? String) ?? Config.DefaultValue.model
-        let selectedMicUID = (micPopup.selectedItem?.representedObject as? String).flatMap { $0 == Self.systemDefaultMicToken ? nil : $0 }
-        Config.savePreferences(model: selectedModel, micUID: selectedMicUID, inputGain: Float(gainSlider.doubleValue))
-
-        didSave = true
-        close()
     }
 
     private func showStatus(_ text: String, isError: Bool) {

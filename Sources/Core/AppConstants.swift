@@ -41,10 +41,11 @@ enum AppConstants {
         static let debugLoggingEnabled = ProcessInfo.processInfo.environment["GROQDICTATE_DEBUG"] == "1"
             || UserDefaults.standard.bool(forKey: debugDefaultsKey)
 
-        static let logDirectory = FileManager.default.homeDirectoryForCurrentUser
-            .appendingPathComponent("Library/Logs/GroqDictate", isDirectory: true)
-        static let logFile = logDirectory.appendingPathComponent("app.log", isDirectory: false)
-        static let maxLogBytes = 8 * 1024 * 1024
+        static let diagnosticsDirectory = FileManager.default.homeDirectoryForCurrentUser
+            .appendingPathComponent("Library/Application Support/GroqDictate/Diagnostics", isDirectory: true)
+        static let journalFile = diagnosticsDirectory.appendingPathComponent("diagnostics.jsonl", isDirectory: false)
+
+        static let maxJournalBytes = 8 * 1024 * 1024
     }
 
     enum Timing {

@@ -6,6 +6,7 @@ final class AppDelegateLogicTests: XCTestCase {
         XCTAssertEqual(AppDelegate.toggleAction(for: .idle), .startRecording)
         XCTAssertEqual(AppDelegate.toggleAction(for: .recording), .stopAndTranscribe)
         XCTAssertEqual(AppDelegate.toggleAction(for: .processing), .ignore)
+        XCTAssertEqual(AppDelegate.toggleAction(for: .pendingPaste), .ignore)
         XCTAssertEqual(AppDelegate.toggleAction(for: .notice), .ignore)
         XCTAssertEqual(AppDelegate.toggleAction(for: .error(.retryable)), .handleError(.retryable))
     }
@@ -14,6 +15,7 @@ final class AppDelegateLogicTests: XCTestCase {
         XCTAssertEqual(AppDelegate.escapeAction(for: .idle), .ignore)
         XCTAssertEqual(AppDelegate.escapeAction(for: .recording), .cancelActiveWork)
         XCTAssertEqual(AppDelegate.escapeAction(for: .processing), .cancelActiveWork)
+        XCTAssertEqual(AppDelegate.escapeAction(for: .pendingPaste), .cancelActiveWork)
         XCTAssertEqual(AppDelegate.escapeAction(for: .notice), .dismissNotice)
         XCTAssertEqual(AppDelegate.escapeAction(for: .error(.other)), .dismissError)
     }
@@ -45,6 +47,32 @@ final class AppDelegateLogicTests: XCTestCase {
         )
     }
 
+    func testInitialPasteDisposition_requiresOnlyClipboardWrite() {
+        XCTAssertEqual(
+            AppDelegate.initialPasteDisposition(clipboardWriteSucceeded: true),
+            .autoPaste
+        )
+        XCTAssertEqual(
+            AppDelegate.initialPasteDisposition(clipboardWriteSucceeded: false),
+            .clipboardWriteFailed
+        )
+    }
+
+    func testExecutionPasteDisposition_usesExecutionTimeEligibility() {
+        XCTAssertEqual(
+            AppDelegate.executionPasteDisposition(canAutoPasteNow: true, postEventAccessGranted: true),
+            .autoPaste
+        )
+        XCTAssertEqual(
+            AppDelegate.executionPasteDisposition(canAutoPasteNow: false, postEventAccessGranted: true),
+            .clipboardOnly
+        )
+        XCTAssertEqual(
+            AppDelegate.executionPasteDisposition(canAutoPasteNow: true, postEventAccessGranted: false),
+            .clipboardOnly
+        )
+    }
+
     func testShouldPresentPostEventDeniedGuidance_onlyOnce() {
         XCTAssertTrue(AppDelegate.shouldPresentPostEventDeniedGuidance(shownActions: []))
         XCTAssertFalse(
@@ -67,6 +95,33 @@ final class AppDelegateLogicTests: XCTestCase {
                 shouldReactivateTargetOnDismiss: false,
                 noticeMessage: AppStrings.Panel.copiedToClipboardAutoPasteDenied
             )
+        )
+    }
+
+    func testDiagnosticsSanitize_redactsAPIKeysTranscriptPreviewsAndPaths() {
+        let input = "token=gsk_secretkey text=hello world /Users/emmanuelchucks/tmp/file.wav"
+
+        let sanitized = DiagnosticsStore.sanitize(input)
+
+        XCTAssertEqual(sanitized, "token=gsk_[redacted] text=<redacted>")
+    }
+
+    func testDiagnosticsSanitizeMetadata_redactsSensitiveValuesButPreservesShape() {
+        let metadata = [
+            "request_id": "req_123",
+            "file": "/private/var/tmp/audio.wav",
+            "note": "message=provider says too much"
+        ]
+
+        let sanitized = DiagnosticsStore.sanitize(metadata)
+
+        XCTAssertEqual(
+            sanitized,
+            [
+                "request_id": "req_123",
+                "file": "<path>",
+                "note": "message=<redacted>"
+            ]
         )
     }
 }

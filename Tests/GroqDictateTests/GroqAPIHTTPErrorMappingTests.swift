@@ -54,6 +54,20 @@ final class GroqAPIHTTPErrorMappingTests: XCTestCase {
         XCTAssertEqual(fallbackMessage, "HTTP 418")
     }
 
+    func testErrorDescription_usesAppOwnedCopyWhileDiagnosticSummaryPreservesProviderDetail() {
+        let forbidden = GroqAPI.TranscriptionError.forbidden("Provider says forbidden for org")
+        XCTAssertEqual(forbidden.errorDescription, AppStrings.Errors.accessDenied)
+        XCTAssertEqual(forbidden.diagnosticSummary, "Provider says forbidden for org")
+
+        let badRequest = GroqAPI.TranscriptionError.badRequest("Provider validation details")
+        XCTAssertEqual(badRequest.errorDescription, AppStrings.Errors.requestRejected)
+        XCTAssertEqual(badRequest.diagnosticSummary, "Provider validation details")
+
+        let unknown = GroqAPI.TranscriptionError.other("HTTP 418")
+        XCTAssertEqual(unknown.errorDescription, AppStrings.Errors.unexpectedTranscriptionError)
+        XCTAssertEqual(unknown.diagnosticSummary, "HTTP 418")
+    }
+
     private func makeResponse(status: Int, headers: [String: String] = [:]) -> HTTPURLResponse {
         let response = HTTPURLResponse(
             url: URL(string: "https://api.groq.com/openai/v1/audio/transcriptions")!,

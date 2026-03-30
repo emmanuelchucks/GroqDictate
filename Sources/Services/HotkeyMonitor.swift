@@ -138,12 +138,25 @@ final class HotkeyMonitor {
     private func installNSEventFallback() -> Bool {
         AppLog.debug("installing NSEvent fallback monitors", category: .hotkey)
         globalMonitor = NSEvent.addGlobalMonitorForEvents(matching: [.flagsChanged, .keyDown]) { [weak self] event in
-            self?.handleNSEvent(event)
+            self?.handleFallbackEvent(
+                type: event.type,
+                keyCode: event.keyCode,
+                commandModifierActive: event.modifierFlags.contains(.command)
+            )
         }
 
         localMonitor = NSEvent.addLocalMonitorForEvents(matching: [.flagsChanged, .keyDown]) { [weak self] event in
-            self?.handleNSEvent(event)
-            return event
+            guard
+                let self,
+                self.handleFallbackEvent(
+                    type: event.type,
+                    keyCode: event.keyCode,
+                    commandModifierActive: event.modifierFlags.contains(.command)
+                )
+            else {
+                return event
+            }
+            return nil
         }
 
         let installedGlobal = globalMonitor != nil
@@ -197,22 +210,23 @@ final class HotkeyMonitor {
         return Unmanaged.passUnretained(event)
     }
 
-    private func handleNSEvent(_ event: NSEvent) {
-        if event.type == .keyDown, event.keyCode == KeyCode.escape {
-            _ = consumeEscapeIfNeeded(isFallback: true)
-            return
+    @discardableResult
+    func handleFallbackEvent(type: NSEvent.EventType, keyCode: UInt16, commandModifierActive: Bool) -> Bool {
+        if type == .keyDown, keyCode == KeyCode.escape {
+            return consumeEscapeIfNeeded(isFallback: true)
         }
 
-        guard event.type == .flagsChanged else { return }
+        guard type == .flagsChanged else { return false }
 
-        if event.keyCode == KeyCode.rightCommand {
-            _ = handleRightCommandTransition(isDown: event.modifierFlags.contains(.command), isFallback: true)
-            return
+        if Int(keyCode) == KeyCode.rightCommand {
+            return handleRightCommandTransition(isDown: commandModifierActive, isFallback: true)
         }
 
-        if !event.modifierFlags.contains(.command), rightCommandDown {
+        if !commandModifierActive, rightCommandDown {
             rightCommandDown = false
         }
+
+        return false
     }
 
     @discardableResult

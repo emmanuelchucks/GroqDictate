@@ -17,12 +17,14 @@ final class AudioRecorder {
     var selectedDeviceUID: String?
     private(set) var isRecording = false
     private let _inputGain = OSAllocatedUnfairLock(initialState: Float(5.0))
+    private let audioPreprocessor: any AudioPreprocessor
+
+    init(audioPreprocessor: any AudioPreprocessor = DefaultAudioPreprocessor()) {
+        self.audioPreprocessor = audioPreprocessor
+    }
 
     deinit {
-        if let queue = audioQueue {
-            AudioQueueStop(queue, true)
-            AudioQueueDispose(queue, true)
-        }
+        teardownAudioQueue()
         try? fileHandle?.close()
         if let session = currentSession {
             cleanupSession(session)
@@ -50,24 +52,14 @@ final class AudioRecorder {
     private var fileHandle: FileHandle?
     private var bytesWritten: UInt32 = 0
     private var currentSession: RecordingSession?
+    private var queueOwnerRetain: Unmanaged<AudioRecorder>?
 
     private let sessionRootURL = FileManager.default.temporaryDirectory
         .appendingPathComponent("groqdictate-recordings", isDirectory: true)
 
-    private static let flacThreshold = 10 * 1024 * 1024
     private static let sampleRate: Float64 = 16000
     private static let bufferSize: UInt32 = 4096
     private static let bufferCount = 3
-
-    private static let trimWindowMs: Float64 = 20
-    private static let trimSpeechRMSThreshold: Float = 0.005
-    private static let trimMinLeadingSpeechWindows = 4
-    private static let trimMinTrailingSpeechWindows = 8
-    private static let trimLeadingPaddingMs: Float64 = 120
-    private static let trimTrailingPaddingMs: Float64 = 150
-    private static let trimMinLeadingTrimMs: Float64 = 180
-    private static let trimMinTrailingTrimMs: Float64 = 120
-    private static let trimMinResultMs: Float64 = 300
 
     func start() throws {
         if let existingSession = currentSession {
@@ -85,29 +77,44 @@ final class AudioRecorder {
         writeWAVHeader(dataSize: 0)
 
         var format = Self.monoInt16Format()
-        let pointer = UnsafeMutableRawPointer(Unmanaged.passRetained(self).toOpaque())
-
         var queue: AudioQueueRef?
-        try osCheck(AudioQueueNewInput(&format, Self.inputCallback, pointer, nil, nil, 0, &queue))
-        guard let queue else { throw NSError(domain: NSOSStatusErrorDomain, code: Int(unimpErr)) }
+        let ownerRetain = Unmanaged.passRetained(self)
+        let userData = UnsafeMutableRawPointer(ownerRetain.toOpaque())
 
-        audioQueue = queue
-        setInputDevice(on: queue)
-        try allocateAndEnqueueBuffers(on: queue)
-        try osCheck(AudioQueueStart(queue, nil))
-        isRecording = true
+        do {
+            try osCheck(AudioQueueNewInput(&format, Self.inputCallback, userData, nil, nil, 0, &queue))
+            guard let queue else { throw NSError(domain: NSOSStatusErrorDomain, code: Int(unimpErr)) }
+
+            audioQueue = queue
+            queueOwnerRetain = ownerRetain
+            setInputDevice(on: queue)
+            try allocateAndEnqueueBuffers(on: queue)
+            try osCheck(AudioQueueStart(queue, nil))
+            isRecording = true
+        } catch {
+            if let queue {
+                AudioQueueDispose(queue, true)
+            }
+            audioQueue = nil
+            buffers.removeAll()
+            if queueOwnerRetain != nil {
+                releaseQueueOwnerRetain()
+            } else {
+                ownerRetain.release()
+            }
+            try? fileHandle?.close()
+            fileHandle = nil
+            bytesWritten = 0
+            cleanupSession(session)
+            currentSession = nil
+            throw error
+        }
     }
 
     func stop(processRecording: Bool = true, completion: @escaping (URL) -> Void) {
         isRecording = false
 
-        if let queue = audioQueue {
-            AudioQueueStop(queue, true)
-            AudioQueueDispose(queue, true)
-            audioQueue = nil
-            buffers.removeAll()
-            Unmanaged.passUnretained(self).release()
-        }
+        teardownAudioQueue()
 
         finalizeWAVHeader()
         try? fileHandle?.close()
@@ -160,128 +167,33 @@ final class AudioRecorder {
 
     private func postProcessRecording(for session: RecordingSession, completion: @escaping (URL) -> Void) {
         DispatchQueue.global(qos: .userInitiated).async {
-            self.trimWAVSilenceEdgesIfNeeded(wavURL: session.wavURL)
-
-            let fileSize = (try? FileManager.default.attributesOfItem(atPath: session.wavURL.path)[.size] as? Int) ?? 0
-            guard fileSize >= Self.flacThreshold else {
-                DispatchQueue.main.async { completion(session.wavURL) }
-                return
-            }
-
-            self.compressToFLAC(for: session, completion: completion)
+            let outputURL = self.audioPreprocessor.processRecording(
+                wavURL: session.wavURL,
+                compressedOutputURL: session.flacURL
+            )
+            DispatchQueue.main.async { completion(outputURL) }
         }
-    }
-
-    private func trimWAVSilenceEdgesIfNeeded(wavURL: URL) {
-        guard let data = try? Data(contentsOf: wavURL, options: .mappedIfSafe), data.count > 44 else { return }
-
-        let sampleByteCount = data.count - 44
-        guard sampleByteCount >= 2 else { return }
-
-        let sampleCount = sampleByteCount / 2
-        var samples = [Int16](repeating: 0, count: sampleCount)
-        _ = samples.withUnsafeMutableBytes { destination in
-            data.copyBytes(to: destination, from: 44..<(44 + sampleCount * 2))
-        }
-
-        guard var (startSample, endSample) = Self.detectSpeechBounds(samples: samples) else { return }
-
-        let leadingPadding = Int(Self.sampleRate * Self.trimLeadingPaddingMs / 1000)
-        let trailingPadding = Int(Self.sampleRate * Self.trimTrailingPaddingMs / 1000)
-        startSample = max(0, startSample - leadingPadding)
-        endSample = min(sampleCount, endSample + trailingPadding)
-
-        let minLeadingTrim = Int(Self.sampleRate * Self.trimMinLeadingTrimMs / 1000)
-        let minTrailingTrim = Int(Self.sampleRate * Self.trimMinTrailingTrimMs / 1000)
-        if startSample < minLeadingTrim { startSample = 0 }
-        if (sampleCount - endSample) < minTrailingTrim { endSample = sampleCount }
-
-        guard startSample < endSample else { return }
-        guard !(startSample == 0 && endSample == sampleCount) else { return }
-
-        let minResultSamples = Int(Self.sampleRate * Self.trimMinResultMs / 1000)
-        guard (endSample - startSample) >= minResultSamples else { return }
-
-        let trimmedSamples = Array(samples[startSample..<endSample])
-        let trimmedPCM = trimmedSamples.withUnsafeBytes { Data($0) }
-
-        var trimmedWAV = Data(capacity: 44 + trimmedPCM.count)
-        trimmedWAV.append(Self.wavHeader(dataSize: UInt32(trimmedPCM.count)))
-        trimmedWAV.append(trimmedPCM)
-
-        do {
-            try trimmedWAV.write(to: wavURL, options: .atomic)
-            bytesWritten = UInt32(trimmedPCM.count)
-        } catch {
-            AppLog.error("failed to trim silence (\(error.localizedDescription))", category: .audio)
-        }
-    }
-
-    private static func detectSpeechBounds(samples: [Int16]) -> (startSample: Int, endSample: Int)? {
-        let windowSize = max(1, Int(sampleRate * trimWindowMs / 1000))
-        let totalWindows = Int(ceil(Double(samples.count) / Double(windowSize)))
-        guard totalWindows > 0 else { return nil }
-
-        var speechWindows = [Bool](repeating: false, count: totalWindows)
-        for index in 0..<totalWindows {
-            let start = index * windowSize
-            let end = min(samples.count, start + windowSize)
-            guard start < end else { continue }
-
-            var sumSquares: Double = 0
-            for sample in samples[start..<end] {
-                let normalized = Double(sample) / 32768.0
-                sumSquares += normalized * normalized
-            }
-
-            let rms = sqrt(sumSquares / Double(end - start))
-            speechWindows[index] = rms >= Double(trimSpeechRMSThreshold)
-        }
-
-        let leadingRequired = max(1, min(trimMinLeadingSpeechWindows, speechWindows.count))
-        let trailingRequired = max(1, min(trimMinTrailingSpeechWindows, speechWindows.count))
-
-        var firstSpeechWindow: Int?
-        var streak = 0
-        for index in 0..<speechWindows.count {
-            if speechWindows[index] {
-                streak += 1
-                if streak >= leadingRequired {
-                    firstSpeechWindow = index - streak + 1
-                    break
-                }
-            } else {
-                streak = 0
-            }
-        }
-
-        guard let firstSpeechWindow else { return nil }
-
-        var lastSpeechWindow: Int?
-        streak = 0
-        for index in stride(from: speechWindows.count - 1, through: 0, by: -1) {
-            if speechWindows[index] {
-                streak += 1
-                if streak >= trailingRequired {
-                    lastSpeechWindow = index + trailingRequired - 1
-                    break
-                }
-            } else {
-                streak = 0
-            }
-        }
-
-        guard let lastSpeechWindow, firstSpeechWindow <= lastSpeechWindow else { return nil }
-
-        let startSample = firstSpeechWindow * windowSize
-        let endSample = min(samples.count, (lastSpeechWindow + 1) * windowSize)
-        return (startSample, endSample)
     }
 
     private func setLevel(_ value: Float) {
         levelLock.lock()
         _currentLevel = value
         levelLock.unlock()
+    }
+
+    private func teardownAudioQueue() {
+        if let queue = audioQueue {
+            AudioQueueStop(queue, true)
+            AudioQueueDispose(queue, true)
+        }
+        audioQueue = nil
+        buffers.removeAll()
+        releaseQueueOwnerRetain()
+    }
+
+    private func releaseQueueOwnerRetain() {
+        queueOwnerRetain?.release()
+        queueOwnerRetain = nil
     }
 
     private static let inputCallback: AudioQueueInputCallback = { userData, queue, buffer, _, _, _ in
@@ -350,32 +262,6 @@ final class AudioRecorder {
         data.append(ascii: "data")
         data.append(uint32: dataSize)
         return data
-    }
-
-    private func compressToFLAC(for session: RecordingSession, completion: @escaping (URL) -> Void) {
-        DispatchQueue.global(qos: .userInitiated).async {
-            try? FileManager.default.removeItem(at: session.flacURL)
-
-            let process = Process()
-            process.executableURL = URL(fileURLWithPath: "/usr/bin/afconvert")
-            process.arguments = ["-f", "flac", "-d", "flac", "-c", "1", session.wavURL.path, session.flacURL.path]
-            process.standardOutput = FileHandle.nullDevice
-            process.standardError = FileHandle.nullDevice
-
-            let succeeded = (try? process.run()).map {
-                process.waitUntilExit()
-                return process.terminationStatus == 0
-            } ?? false
-
-            let outputURL = succeeded && FileManager.default.fileExists(atPath: session.flacURL.path)
-                ? session.flacURL
-                : session.wavURL
-            if outputURL == session.flacURL {
-                try? FileManager.default.removeItem(at: session.wavURL)
-            }
-
-            DispatchQueue.main.async { completion(outputURL) }
-        }
     }
 
     private static func monoInt16Format() -> AudioStreamBasicDescription {

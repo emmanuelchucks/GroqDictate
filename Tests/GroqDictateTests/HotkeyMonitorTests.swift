@@ -31,4 +31,34 @@ final class HotkeyMonitorTests: XCTestCase {
         XCTAssertTrue(monitor.consumeEscapeIfNeeded(isFallback: true))
         XCTAssertEqual(escapeCount, 1)
     }
+
+    func testHandleFallbackEvent_reportsEscapeConsumptionForLocalSuppression() {
+        let monitor = HotkeyMonitor(dispatchToMain: { work in work() })
+        monitor.shouldConsumeEscape = { true }
+
+        XCTAssertTrue(
+            monitor.handleFallbackEvent(type: .keyDown, keyCode: 53, commandModifierActive: false)
+        )
+    }
+
+    func testHandleFallbackEvent_tracksRightCommandTransitionsInFallbackMode() {
+        let monitor = HotkeyMonitor(dispatchToMain: { work in work() })
+        var pressCount = 0
+        monitor.onRightCommandPress = { pressCount += 1 }
+
+        XCTAssertTrue(
+            monitor.handleFallbackEvent(type: .flagsChanged, keyCode: 54, commandModifierActive: true)
+        )
+        XCTAssertFalse(
+            monitor.handleFallbackEvent(type: .flagsChanged, keyCode: 54, commandModifierActive: true)
+        )
+        XCTAssertEqual(pressCount, 1)
+
+        XCTAssertTrue(
+            monitor.handleFallbackEvent(type: .flagsChanged, keyCode: 54, commandModifierActive: false)
+        )
+        XCTAssertFalse(
+            monitor.handleFallbackEvent(type: .flagsChanged, keyCode: 54, commandModifierActive: false)
+        )
+    }
 }

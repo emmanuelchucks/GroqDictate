@@ -38,7 +38,7 @@ enum AppStrings {
         static let recording = "● Recording"
         static let transcribing = "⟳ Transcribing…"
         static let copiedToClipboard = "✓ Copied to clipboard"
-        static let copiedToClipboardAutoPasteDenied = "✓ Copied to clipboard. Enable auto-paste in Accessibility."
+        static let copiedToClipboardAutoPasteDenied = "✓ Copied to clipboard"
         static let clipboardWriteFailed = "⚠ Clipboard unavailable"
         static let escCancel = "esc to cancel"
         static let escDismiss = "esc to dismiss"
@@ -87,5 +87,14 @@ enum AppStrings {
         static let resourceNotFound = "Resource not found"
         static let tryAgain = "Try again"
         static let recordingTooLarge = "Recording too large"
+        static let requestRejected = "Request rejected"
+        static let accessDenied = "Access denied"
+        static let couldntProcessAudio = "Couldn't process audio"
+        static let temporaryServiceIssue = "Temporary service issue"
+        static let serviceAtCapacity = "Service at capacity"
+        static let groqUnavailable = "Groq unavailable"
+        static let transcriptionTimedOut = "Timed out"
+        static let noSpeechDetected = "No speech detected"
+        static let unexpectedTranscriptionError = "Unexpected transcription error"
     }
 }
