@@ -86,10 +86,15 @@ verify-generated-project:
 	cp -R "$(PROJECT)" "$$tmp_dir/$(PROJECT)"; \
 	trap 'rm -rf "$$tmp_dir"' EXIT; \
 	$(MAKE) --no-print-directory generate; \
-	diff -qr "$$tmp_dir/$(PROJECT)" "$(PROJECT)" >/dev/null || { \
+	diff -qr \
+		-x xcshareddata \
+		"$$tmp_dir/$(PROJECT)" "$(PROJECT)" >/dev/null || { \
 		echo "❌ $(PROJECT) is out of date with project.yml"; \
 		echo "Run 'xcodegen generate' and commit the generated project changes."; \
-		git --no-pager diff --no-index -- "$$tmp_dir/$(PROJECT)" "$(PROJECT)" || true; \
+		git --no-pager diff --no-index -- \
+			":(exclude)$$tmp_dir/$(PROJECT)/xcshareddata" \
+			":(exclude)$(PROJECT)/xcshareddata" \
+			"$$tmp_dir/$(PROJECT)" "$(PROJECT)" || true; \
 		exit 1; \
 	}; \
 	echo "✅ Generated project matches project.yml"
