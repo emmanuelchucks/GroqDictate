@@ -20,8 +20,21 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private lazy var bootstrapCoordinator = makeBootstrapCoordinator()
     private lazy var workflow = makeWorkflowCoordinator()
 
+    enum LaunchAtLoginConfigurationError: LocalizedError {
+        case requiresApplicationsInstall
+
+        var errorDescription: String? {
+            switch self {
+            case .requiresApplicationsInstall:
+                return "Launch at login is only supported when GroqDictate is installed in /Applications."
+            }
+        }
+    }
+
     func applicationDidFinishLaunching(_ notification: Notification) {
         AppLog.debug("application did finish launching", category: .app)
+        logRuntimeEnvironment()
+        repairLaunchAtLoginRegistrationIfNeeded()
         shellCoordinator.installMenus()
         wireFocusTracking()
         wireHotkeys()
@@ -85,7 +98,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     private func makeShellCoordinator() -> AppShellCoordinator {
-        AppShellCoordinator(
+        let bundleURL = Bundle.main.bundleURL
+
+        return AppShellCoordinator(
             activateApp: {
                 NSApp.activate(ignoringOtherApps: true)
             },
@@ -105,19 +120,19 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 self?.setupCoordinator.show(isOnboarding: false)
             },
             isLaunchAtLoginSupported: {
-                if #available(macOS 13.0, *) {
-                    return true
-                }
-                return false
+                guard #available(macOS 13.0, *) else { return false }
+                return Self.isEligibleForLaunchAtLoginRegistration(bundleURL: bundleURL)
             },
             isLaunchAtLoginEnabled: {
-                if #available(macOS 13.0, *) {
-                    return SMAppService.mainApp.status == .enabled
-                }
-                return false
+                guard #available(macOS 13.0, *) else { return false }
+                guard Self.isEligibleForLaunchAtLoginRegistration(bundleURL: bundleURL) else { return false }
+                return SMAppService.mainApp.status == .enabled
             },
             setLaunchAtLoginEnabled: { enabled in
                 guard #available(macOS 13.0, *) else { return }
+                guard Self.isEligibleForLaunchAtLoginRegistration(bundleURL: bundleURL) else {
+                    throw LaunchAtLoginConfigurationError.requiresApplicationsInstall
+                }
                 if enabled {
                     try SMAppService.mainApp.register()
                 } else {
@@ -189,6 +204,68 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         )
     }
 
+    private func logRuntimeEnvironment() {
+        let bundleURL = Bundle.main.bundleURL
+        let bundleIdentifier = Bundle.main.bundleIdentifier ?? "unknown"
+
+        AppLog.metric(
+            "runtime_environment",
+            category: .app,
+            level: .debug,
+            values: [
+                "bundle_id": bundleIdentifier,
+                "install_location": Self.installLocationCategory(for: bundleURL),
+                "launch_at_login_eligible": Self.isEligibleForLaunchAtLoginRegistration(bundleURL: bundleURL)
+                    ? "true"
+                    : "false",
+                "launch_at_login_status": launchAtLoginStatusDescription()
+            ]
+        )
+    }
+
+    private func launchAtLoginStatusDescription() -> String {
+        guard #available(macOS 13.0, *) else { return "unsupported" }
+
+        switch SMAppService.mainApp.status {
+        case .notRegistered:
+            return "not_registered"
+        case .enabled:
+            return "enabled"
+        case .requiresApproval:
+            return "requires_approval"
+        case .notFound:
+            return "not_found"
+        @unknown default:
+            return "unknown"
+        }
+    }
+
+    private func repairLaunchAtLoginRegistrationIfNeeded() {
+        guard #available(macOS 13.0, *) else { return }
+
+        let bundleURL = Bundle.main.bundleURL
+        let isRegistered = SMAppService.mainApp.status != .notRegistered
+        guard Self.shouldRepairLaunchAtLoginRegistration(
+            bundleURL: bundleURL,
+            isLaunchAtLoginRegistered: isRegistered
+        ) else {
+            return
+        }
+
+        do {
+            try SMAppService.mainApp.unregister()
+            AppLog.event(
+                "launch-at-login unregistered because app is not installed in /Applications",
+                category: .app
+            )
+        } catch {
+            AppLog.error(
+                "failed to unregister launch-at-login for non-installed app (\(error.localizedDescription))",
+                category: .app
+            )
+        }
+    }
+
     static func shouldPresentPostEventDeniedGuidance(
         shownActions: Set<PermissionService.GuidanceAction>
     ) -> Bool {
@@ -231,6 +308,29 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     static func postEventDeniedHandling(openedSystemSettings: Bool) -> PostEventDeniedHandling {
         DictationWorkflowCoordinator.postEventDeniedHandling(openedSystemSettings: openedSystemSettings)
+    }
+
+    static func installLocationCategory(for bundleURL: URL) -> String {
+        let path = bundleURL.resolvingSymlinksInPath().standardizedFileURL.path
+
+        if path.hasPrefix("/Applications/") {
+            return "applications"
+        }
+        if path.contains("/DerivedData/") {
+            return "derived_data"
+        }
+        return "other"
+    }
+
+    static func isEligibleForLaunchAtLoginRegistration(bundleURL: URL) -> Bool {
+        installLocationCategory(for: bundleURL) == "applications"
+    }
+
+    static func shouldRepairLaunchAtLoginRegistration(
+        bundleURL: URL,
+        isLaunchAtLoginRegistered: Bool
+    ) -> Bool {
+        isLaunchAtLoginRegistered && !isEligibleForLaunchAtLoginRegistration(bundleURL: bundleURL)
     }
 }
 

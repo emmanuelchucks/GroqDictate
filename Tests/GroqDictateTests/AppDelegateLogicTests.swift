@@ -124,4 +124,61 @@ final class AppDelegateLogicTests: XCTestCase {
             ]
         )
     }
+
+    func testInstallLocationCategory_classifiesApplicationsAndDerivedDataSeparately() {
+        XCTAssertEqual(
+            AppDelegate.installLocationCategory(for: URL(fileURLWithPath: "/Applications/GroqDictate.app")),
+            "applications"
+        )
+        XCTAssertEqual(
+            AppDelegate.installLocationCategory(
+                for: URL(
+                    fileURLWithPath: "/Users/emmanuelchucks/Library/Developer/Xcode/DerivedData/GroqDictate/Build/Products/Debug/GroqDictate.app"
+                )
+            ),
+            "derived_data"
+        )
+        XCTAssertEqual(
+            AppDelegate.installLocationCategory(for: URL(fileURLWithPath: "/Users/emmanuelchucks/Desktop/GroqDictate.app")),
+            "other"
+        )
+    }
+
+    func testLaunchAtLoginRegistrationEligibility_requiresApplicationsInstall() {
+        XCTAssertTrue(
+            AppDelegate.isEligibleForLaunchAtLoginRegistration(
+                bundleURL: URL(fileURLWithPath: "/Applications/GroqDictate.app")
+            )
+        )
+        XCTAssertFalse(
+            AppDelegate.isEligibleForLaunchAtLoginRegistration(
+                bundleURL: URL(
+                    fileURLWithPath: "/Users/emmanuelchucks/Library/Developer/Xcode/DerivedData/GroqDictate/Build/Products/Debug/GroqDictate.app"
+                )
+            )
+        )
+    }
+
+    func testShouldRepairLaunchAtLoginRegistration_onlyForRegisteredNonApplicationsBuilds() {
+        XCTAssertTrue(
+            AppDelegate.shouldRepairLaunchAtLoginRegistration(
+                bundleURL: URL(
+                    fileURLWithPath: "/Users/emmanuelchucks/Library/Developer/Xcode/DerivedData/GroqDictate/Build/Products/Debug/GroqDictate.app"
+                ),
+                isLaunchAtLoginRegistered: true
+            )
+        )
+        XCTAssertFalse(
+            AppDelegate.shouldRepairLaunchAtLoginRegistration(
+                bundleURL: URL(fileURLWithPath: "/Applications/GroqDictate.app"),
+                isLaunchAtLoginRegistered: true
+            )
+        )
+        XCTAssertFalse(
+            AppDelegate.shouldRepairLaunchAtLoginRegistration(
+                bundleURL: URL(fileURLWithPath: "/Applications/GroqDictate.app"),
+                isLaunchAtLoginRegistered: false
+            )
+        )
+    }
 }

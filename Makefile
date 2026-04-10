@@ -169,15 +169,18 @@ dev:
 	test -d "$(DEBUG_APP)" || { echo "❌ Debug build output missing"; exit 1; }; \
 	mkdir -p "$$(dirname "$(APP_PATH)")"; \
 	pkill -x "$(APP_NAME)" >/dev/null 2>&1 || true; \
-	rm -rf "$(APP_PATH)"; \
-	cp -R "$(DEBUG_APP)" "$(APP_PATH)"; \
+	if [ -d "$(APP_PATH)" ]; then \
+		rsync -a --delete "$(DEBUG_APP)/" "$(APP_PATH)/"; \
+	else \
+		cp -R "$(DEBUG_APP)" "$(APP_PATH)"; \
+	fi; \
 	test -x "$(INSTALLED_EXECUTABLE)" || { echo "❌ Executable not found: $(INSTALLED_EXECUTABLE)"; exit 1; }; \
 	if [ "$(DEBUG_PERSIST)" = "1" ]; then \
 		defaults write "$(BUNDLE_ID)" debug-logging-enabled -bool true; \
 		echo "✅ Persistent debug logging enabled"; \
 	fi; \
 	echo "✅ Debug app installed: $(APP_PATH)"; \
-	"$(INSTALLED_EXECUTABLE)"
+	open -a "$(APP_PATH)"
 
 release:
 	@set -euo pipefail; \
