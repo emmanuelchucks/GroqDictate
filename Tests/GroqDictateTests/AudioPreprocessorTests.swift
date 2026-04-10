@@ -107,6 +107,31 @@ final class AudioPreprocessorTests: XCTestCase {
         XCTAssertFalse(FileManager.default.fileExists(atPath: wavURL.path))
     }
 
+    func testProcessRecording_skipsCompressionWhenTrimmedResultFallsBelowThreshold() throws {
+        let originalSamples = silentSamples(milliseconds: 300)
+            + speechSamples(milliseconds: 500)
+            + silentSamples(milliseconds: 300)
+        let wavURL = try writeWAV(samples: originalSamples)
+        let compressedOutputURL = wavURL.deletingPathExtension().appendingPathExtension("flac")
+        let preprocessor = DefaultAudioPreprocessor(
+            compressionThresholdBytes: 30_000,
+            compressionHandler: { _, _ in
+                XCTFail("Compression should not run after trimming brings the clip below threshold")
+                return false
+            }
+        )
+
+        let outputURL = preprocessor.processRecording(
+            wavURL: wavURL,
+            compressedOutputURL: compressedOutputURL
+        )
+
+        XCTAssertEqual(outputURL, wavURL)
+        XCTAssertTrue(FileManager.default.fileExists(atPath: wavURL.path))
+        XCTAssertFalse(FileManager.default.fileExists(atPath: compressedOutputURL.path))
+        XCTAssertEqual((try? FileManager.default.attributesOfItem(atPath: wavURL.path)[.size] as? Int) ?? 0, 24_684)
+    }
+
     private func writeWAV(samples: [Int16]) throws -> URL {
         let directoryURL = FileManager.default.temporaryDirectory
             .appendingPathComponent(UUID().uuidString, isDirectory: true)

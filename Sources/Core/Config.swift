@@ -20,7 +20,7 @@ struct Config {
     enum DefaultValue {
         static let model = "whisper-large-v3"
         static let language = "en"
-        static let inputGain: Float = 5.0
+        static let inputGain: Float = 2.0
     }
 
     struct ModelOption: Equatable {

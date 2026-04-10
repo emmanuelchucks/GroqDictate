@@ -11,7 +11,7 @@ final class SetupWindow: NSWindow, NSWindowDelegate {
     private let micPopup = NSPopUpButton()
     private let modelPopup = NSPopUpButton()
     private let gainSlider = NSSlider()
-    private let gainLabel = NSTextField(labelWithString: "5.0x")
+    private let gainLabel = NSTextField(labelWithString: "2.0x")
     private let statusLabel = NSTextField(labelWithString: "")
 
     var onSave: (() -> Void)?

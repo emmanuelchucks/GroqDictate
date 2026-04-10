@@ -10,13 +10,33 @@ struct AudioDevice {
 }
 
 final class AudioRecorder {
+    private struct RecordingDiagnostics {
+        var totalSamples = 0
+        var inputPeak: Float = 0
+        var outputPeak: Float = 0
+        var inputSumSquares: Double = 0
+        var outputSumSquares: Double = 0
+        var clippedSamples = 0
+
+        mutating func observe(input: Float, output: Float, clipped: Bool) {
+            totalSamples += 1
+            inputPeak = max(inputPeak, abs(input))
+            outputPeak = max(outputPeak, abs(output))
+            inputSumSquares += Double(input * input)
+            outputSumSquares += Double(output * output)
+            if clipped {
+                clippedSamples += 1
+            }
+        }
+    }
+
     var inputGain: Float {
         get { _inputGain.withLock { $0 } }
         set { _inputGain.withLock { $0 = newValue } }
     }
     var selectedDeviceUID: String?
     private(set) var isRecording = false
-    private let _inputGain = OSAllocatedUnfairLock(initialState: Float(5.0))
+    private let _inputGain = OSAllocatedUnfairLock(initialState: Config.DefaultValue.inputGain)
     private let audioPreprocessor: any AudioPreprocessor
 
     init(audioPreprocessor: any AudioPreprocessor = DefaultAudioPreprocessor()) {
@@ -53,6 +73,7 @@ final class AudioRecorder {
     private var bytesWritten: UInt32 = 0
     private var currentSession: RecordingSession?
     private var queueOwnerRetain: Unmanaged<AudioRecorder>?
+    private var recordingDiagnostics = RecordingDiagnostics()
 
     private let sessionRootURL = FileManager.default.temporaryDirectory
         .appendingPathComponent("groqdictate-recordings", isDirectory: true)
@@ -73,6 +94,7 @@ final class AudioRecorder {
 
         fileHandle = try FileHandle(forWritingTo: session.wavURL)
         bytesWritten = 0
+        recordingDiagnostics = RecordingDiagnostics()
         setLevel(0)
         writeWAVHeader(dataSize: 0)
 
@@ -119,6 +141,7 @@ final class AudioRecorder {
         finalizeWAVHeader()
         try? fileHandle?.close()
         fileHandle = nil
+        logRecordingDiagnostics()
 
         guard let session = currentSession else { return }
 
@@ -148,10 +171,16 @@ final class AudioRecorder {
 
         var sumSquares: Float = 0
         for i in 0..<sampleCount {
-            var value = Float(samples[i]) / 32768.0
-            if gain > 1.0 { value *= gain }
-            sumSquares += value * value
-            samples[i] = Int16(clamping: Int(max(-1, min(1, value)) * 32767))
+            let inputValue = Float(samples[i]) / 32768.0
+            var gainedValue = inputValue
+            if gain > 1.0 { gainedValue *= gain }
+
+            let clampedValue = max(-1, min(1, gainedValue))
+            let clipped = gainedValue != clampedValue
+            sumSquares += clampedValue * clampedValue
+            recordingDiagnostics.observe(input: inputValue, output: clampedValue, clipped: clipped)
+
+            samples[i] = Int16(clamping: Int(clampedValue * 32767))
         }
 
         let rms = min(sqrt(sumSquares / Float(max(sampleCount, 1))) * 3, 1)
@@ -244,6 +273,39 @@ final class AudioRecorder {
         guard let fileHandle else { return }
         fileHandle.seek(toFileOffset: 0)
         fileHandle.write(Self.wavHeader(dataSize: bytesWritten))
+    }
+
+    private func logRecordingDiagnostics() {
+        guard recordingDiagnostics.totalSamples > 0 else { return }
+
+        let sampleCount = Double(recordingDiagnostics.totalSamples)
+        let durationMs = sampleCount / Self.sampleRate * 1000
+        let inputRMS = sqrt(recordingDiagnostics.inputSumSquares / sampleCount)
+        let outputRMS = sqrt(recordingDiagnostics.outputSumSquares / sampleCount)
+        let clippedRatio = Double(recordingDiagnostics.clippedSamples) / sampleCount * 100
+
+        AppLog.metric(
+            "audio_capture_quality",
+            category: .audio,
+            level: .debug,
+            values: [
+                "clipped": recordingDiagnostics.clippedSamples > 0 ? "true" : "false",
+                "clipped_ratio_pct": String(format: "%.3f", clippedRatio),
+                "clipped_samples": String(recordingDiagnostics.clippedSamples),
+                "duration_ms": String(format: "%.0f", durationMs),
+                "gain": String(format: "%.1f", inputGain),
+                "input_peak_dbfs": Self.formatDBFS(recordingDiagnostics.inputPeak),
+                "input_rms_dbfs": Self.formatDBFS(Float(inputRMS)),
+                "output_peak_dbfs": Self.formatDBFS(recordingDiagnostics.outputPeak),
+                "output_rms_dbfs": Self.formatDBFS(Float(outputRMS)),
+                "samples": String(recordingDiagnostics.totalSamples)
+            ]
+        )
+    }
+
+    private static func formatDBFS(_ value: Float) -> String {
+        let floored = max(Double(abs(value)), 0.000_001)
+        return String(format: "%.1f", 20 * log10(floored))
     }
 
     private static func wavHeader(dataSize: UInt32) -> Data {

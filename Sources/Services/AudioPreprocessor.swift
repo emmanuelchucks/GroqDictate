@@ -10,6 +10,7 @@ protocol SpeechBoundaryDetector {
 
 struct DefaultAudioPreprocessor: AudioPreprocessor {
     typealias CompressionHandler = (URL, URL) -> Bool
+    private static let defaultCompressionThresholdBytes = 1 * 1024 * 1024
 
     private let speechBoundaryDetector: any SpeechBoundaryDetector
     private let compressionThresholdBytes: Int
@@ -17,7 +18,7 @@ struct DefaultAudioPreprocessor: AudioPreprocessor {
 
     init(
         speechBoundaryDetector: any SpeechBoundaryDetector = RMSAudioSpeechBoundaryDetector(),
-        compressionThresholdBytes: Int = 10 * 1024 * 1024,
+        compressionThresholdBytes: Int = defaultCompressionThresholdBytes,
         compressionHandler: @escaping CompressionHandler = Self.compressWAVToFLAC
     ) {
         self.speechBoundaryDetector = speechBoundaryDetector
@@ -26,10 +27,18 @@ struct DefaultAudioPreprocessor: AudioPreprocessor {
     }
 
     func processRecording(wavURL: URL, compressedOutputURL: URL) -> URL {
+        let originalSize = fileSize(at: wavURL)
         trimSilenceEdgesIfNeeded(wavURL: wavURL)
 
-        let fileSize = (try? FileManager.default.attributesOfItem(atPath: wavURL.path)[.size] as? Int) ?? 0
-        guard fileSize >= compressionThresholdBytes else {
+        let trimmedSize = fileSize(at: wavURL)
+        guard trimmedSize >= compressionThresholdBytes else {
+            logPreprocessingResult(
+                originalSize: originalSize,
+                trimmedSize: trimmedSize,
+                outputSize: trimmedSize,
+                outputFormat: "wav",
+                compressed: false
+            )
             return wavURL
         }
 
@@ -38,10 +47,26 @@ struct DefaultAudioPreprocessor: AudioPreprocessor {
         guard compressionHandler(wavURL, compressedOutputURL),
               FileManager.default.fileExists(atPath: compressedOutputURL.path)
         else {
+            logPreprocessingResult(
+                originalSize: originalSize,
+                trimmedSize: trimmedSize,
+                outputSize: trimmedSize,
+                outputFormat: "wav",
+                compressed: false,
+                compressionFailed: true
+            )
             return wavURL
         }
 
+        let compressedSize = fileSize(at: compressedOutputURL)
         try? FileManager.default.removeItem(at: wavURL)
+        logPreprocessingResult(
+            originalSize: originalSize,
+            trimmedSize: trimmedSize,
+            outputSize: compressedSize,
+            outputFormat: "flac",
+            compressed: true
+        )
         return compressedOutputURL
     }
 
@@ -128,6 +153,35 @@ struct DefaultAudioPreprocessor: AudioPreprocessor {
             process.waitUntilExit()
             return process.terminationStatus == 0
         } ?? false
+    }
+
+    private func fileSize(at url: URL) -> Int {
+        (try? FileManager.default.attributesOfItem(atPath: url.path)[.size] as? Int) ?? 0
+    }
+
+    private func logPreprocessingResult(
+        originalSize: Int,
+        trimmedSize: Int,
+        outputSize: Int,
+        outputFormat: String,
+        compressed: Bool,
+        compressionFailed: Bool = false
+    ) {
+        AppLog.metric(
+            "audio_preprocess",
+            category: .audio,
+            level: .debug,
+            values: [
+                "compressed": compressed ? "true" : "false",
+                "compression_failed": compressionFailed ? "true" : "false",
+                "original_bytes": String(originalSize),
+                "output_bytes": String(outputSize),
+                "output_format": outputFormat,
+                "threshold_bytes": String(compressionThresholdBytes),
+                "trimmed": originalSize != trimmedSize ? "true" : "false",
+                "trimmed_bytes": String(trimmedSize)
+            ]
+        )
     }
 }
 
