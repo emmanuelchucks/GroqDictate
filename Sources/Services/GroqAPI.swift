@@ -4,6 +4,8 @@ enum GroqAPI {
     private struct PreparedUpload {
         let request: URLRequest
         let uploadFileURL: URL
+        let audioFileBytes: Int
+        let uploadFileBytes: Int
     }
 
     final class TranscriptionRequest {
@@ -78,14 +80,15 @@ enum GroqAPI {
     private static let resourceTimeout: TimeInterval = 30
     private static let latencyLogThresholdMs: Double = 2500
     private static let uploadChunkSize = 64 * 1024
+    private static let transcriptionSessionProfile = "fresh_ephemeral"
 
-    private static let session: URLSession = {
-        let config = URLSessionConfiguration.default
+    private static let warmupSession: URLSession = {
+        let config = URLSessionConfiguration.ephemeral
         config.requestCachePolicy = .reloadIgnoringLocalCacheData
         config.urlCache = nil
-        config.timeoutIntervalForRequest = requestTimeout
-        config.timeoutIntervalForResource = resourceTimeout
-        config.waitsForConnectivity = true
+        config.timeoutIntervalForRequest = 5
+        config.timeoutIntervalForResource = 5
+        config.waitsForConnectivity = false
         return URLSession(configuration: config)
     }()
 
@@ -93,7 +96,39 @@ enum GroqAPI {
         var request = URLRequest(url: AppConstants.URLs.groqAPIHost)
         request.httpMethod = "HEAD"
         request.timeoutInterval = 5
-        session.dataTask(with: request) { _, _, _ in }.resume()
+        warmupSession.dataTask(with: request) { _, _, _ in }.resume()
+    }
+
+    static func makeTranscriptionSessionConfiguration() -> URLSessionConfiguration {
+        let config = URLSessionConfiguration.ephemeral
+        config.requestCachePolicy = .reloadIgnoringLocalCacheData
+        config.urlCache = nil
+        config.timeoutIntervalForRequest = requestTimeout
+        config.timeoutIntervalForResource = resourceTimeout
+        config.waitsForConnectivity = false
+        return config
+    }
+
+    static func shouldRetryTransportError(_ nsError: NSError) -> Bool {
+        switch URLError.Code(rawValue: nsError.code) {
+        case .timedOut, .networkConnectionLost, .secureConnectionFailed:
+            return true
+        default:
+            return false
+        }
+    }
+
+    static func transportErrorName(for nsError: NSError) -> String {
+        switch URLError.Code(rawValue: nsError.code) {
+        case .timedOut: return "timed_out"
+        case .networkConnectionLost: return "network_connection_lost"
+        case .secureConnectionFailed: return "secure_connection_failed"
+        case .notConnectedToInternet: return "not_connected_to_internet"
+        case .cannotConnectToHost: return "cannot_connect_to_host"
+        case .cannotFindHost: return "cannot_find_host"
+        case .dnsLookupFailed: return "dns_lookup_failed"
+        default: return "code_\(nsError.code)"
+        }
     }
 
     static func transcribe(
@@ -136,6 +171,8 @@ enum GroqAPI {
         send(
             preparedUpload.request,
             uploadFileURL: preparedUpload.uploadFileURL,
+            audioFileBytes: preparedUpload.audioFileBytes,
+            uploadFileBytes: preparedUpload.uploadFileBytes,
             requestHandle: requestHandle,
             attempt: 1,
             startedAt: startedAt,
@@ -201,12 +238,20 @@ enum GroqAPI {
         let uploadSize = (try FileManager.default.attributesOfItem(atPath: uploadFileURL.path)[.size] as? NSNumber)?.intValue ?? 0
         request.setValue(String(uploadSize), forHTTPHeaderField: "Content-Length")
         completed = true
-        return PreparedUpload(request: request, uploadFileURL: uploadFileURL)
+        let audioSize = (try FileManager.default.attributesOfItem(atPath: fileURL.path)[.size] as? NSNumber)?.intValue ?? 0
+        return PreparedUpload(
+            request: request,
+            uploadFileURL: uploadFileURL,
+            audioFileBytes: audioSize,
+            uploadFileBytes: uploadSize
+        )
     }
 
     private static func send(
         _ request: URLRequest,
         uploadFileURL: URL,
+        audioFileBytes: Int,
+        uploadFileBytes: Int,
         requestHandle: TranscriptionRequest,
         attempt: Int,
         startedAt: CFAbsoluteTime,
@@ -219,11 +264,19 @@ enum GroqAPI {
             return
         }
 
-        let activeSession = attempt == 1 ? session : URLSession(configuration: .ephemeral)
+        logAttemptStart(
+            attempt: attempt,
+            elapsedMs: elapsedMs(since: startedAt),
+            audioFileBytes: audioFileBytes,
+            uploadFileBytes: uploadFileBytes
+        )
+
+        // Use a fresh session for each upload to avoid carrying forward bad connection state between requests.
+        let activeSession = URLSession(configuration: makeTranscriptionSessionConfiguration())
         let task = activeSession.uploadTask(with: request, fromFile: uploadFileURL) { data, response, error in
             var shouldCleanupUpload = true
             defer {
-                if attempt > 1 { activeSession.invalidateAndCancel() }
+                activeSession.invalidateAndCancel()
                 if shouldCleanupUpload {
                     requestHandle.finish()
                 }
@@ -241,6 +294,8 @@ enum GroqAPI {
                     readMs: readMs,
                     buildMs: buildMs,
                     attempt: attempt,
+                    audioFileBytes: audioFileBytes,
+                    uploadFileBytes: uploadFileBytes,
                     statusCode: statusCode,
                     requestID: requestID,
                     note: note
@@ -249,32 +304,38 @@ enum GroqAPI {
 
             if let error {
                 let nsError = error as NSError
-                let isRetryableTransport = nsError.code == NSURLErrorTimedOut
-                    || nsError.code == NSURLErrorNetworkConnectionLost
-                    || nsError.code == NSURLErrorSecureConnectionFailed
+                let isRetryableTransport = shouldRetryTransportError(nsError)
+                logTransportError(
+                    nsError,
+                    attempt: attempt,
+                    elapsedMs: totalMs,
+                    audioFileBytes: audioFileBytes,
+                    uploadFileBytes: uploadFileBytes,
+                    willRetry: attempt == 1 && isRetryableTransport
+                )
 
                 if attempt == 1 && isRetryableTransport {
                     shouldCleanupUpload = false
-                    session.reset {
-                        guard !requestHandle.isCancelled else {
-                            requestHandle.finish()
-                            return
-                        }
-                        send(
-                            request,
-                            uploadFileURL: uploadFileURL,
-                            requestHandle: requestHandle,
-                            attempt: 2,
-                            startedAt: startedAt,
-                            readMs: readMs,
-                            buildMs: buildMs,
-                            completion: completion
-                        )
+                    guard !requestHandle.isCancelled else {
+                        requestHandle.finish()
+                        return
                     }
+                    send(
+                        request,
+                        uploadFileURL: uploadFileURL,
+                        audioFileBytes: audioFileBytes,
+                        uploadFileBytes: uploadFileBytes,
+                        requestHandle: requestHandle,
+                        attempt: 2,
+                        startedAt: startedAt,
+                        readMs: readMs,
+                        buildMs: buildMs,
+                        completion: completion
+                    )
                     return
                 }
 
-                log("error=\(nsError.code)", statusCode: nil)
+                log("error=\(transportErrorName(for: nsError))", statusCode: nil)
                 completion(.failure(nsError.code == NSURLErrorTimedOut ? .timedOut : .other("Network error")))
                 return
             }
@@ -317,6 +378,8 @@ enum GroqAPI {
         readMs: Double,
         buildMs: Double,
         attempt: Int,
+        audioFileBytes: Int,
+        uploadFileBytes: Int,
         statusCode: Int?,
         requestID: String,
         note: String
@@ -329,12 +392,63 @@ enum GroqAPI {
             level: .debug,
             values: [
                 "attempt": String(attempt),
+                "audio_bytes": String(audioFileBytes),
                 "build_ms": String(format: "%.0f", buildMs),
                 "note": note,
                 "read_ms": String(format: "%.0f", readMs),
                 "request_id": requestID,
+                "session_profile": transcriptionSessionProfile,
                 "status": statusCode.map(String.init) ?? "n/a",
-                "total_ms": String(format: "%.0f", totalMs)
+                "total_ms": String(format: "%.0f", totalMs),
+                "upload_bytes": String(uploadFileBytes)
+            ]
+        )
+    }
+
+    private static func logAttemptStart(
+        attempt: Int,
+        elapsedMs: Double,
+        audioFileBytes: Int,
+        uploadFileBytes: Int
+    ) {
+        AppLog.metric(
+            "transcription_attempt",
+            category: .network,
+            level: .debug,
+            values: [
+                "attempt": String(attempt),
+                "audio_bytes": String(audioFileBytes),
+                "elapsed_ms": String(format: "%.0f", elapsedMs),
+                "phase": "start",
+                "session_profile": transcriptionSessionProfile,
+                "upload_bytes": String(uploadFileBytes)
+            ]
+        )
+    }
+
+    private static func logTransportError(
+        _ nsError: NSError,
+        attempt: Int,
+        elapsedMs: Double,
+        audioFileBytes: Int,
+        uploadFileBytes: Int,
+        willRetry: Bool
+    ) {
+        AppLog.metric(
+            "transcription_transport_error",
+            category: .network,
+            level: .debug,
+            values: [
+                "attempt": String(attempt),
+                "audio_bytes": String(audioFileBytes),
+                "elapsed_ms": String(format: "%.0f", elapsedMs),
+                "error_code": String(nsError.code),
+                "error_domain": nsError.domain,
+                "error_name": transportErrorName(for: nsError),
+                "retryable": shouldRetryTransportError(nsError) ? "true" : "false",
+                "session_profile": transcriptionSessionProfile,
+                "upload_bytes": String(uploadFileBytes),
+                "will_retry": willRetry ? "true" : "false"
             ]
         )
     }

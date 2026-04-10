@@ -54,6 +54,58 @@ final class GroqAPIHTTPErrorMappingTests: XCTestCase {
         XCTAssertEqual(fallbackMessage, "HTTP 418")
     }
 
+    func testMakeTranscriptionSessionConfiguration_failsFastWithoutSharedCacheState() {
+        let config = GroqAPI.makeTranscriptionSessionConfiguration()
+
+        XCTAssertEqual(config.requestCachePolicy, .reloadIgnoringLocalCacheData)
+        XCTAssertNil(config.urlCache)
+        XCTAssertEqual(config.timeoutIntervalForRequest, 12, accuracy: 0.001)
+        XCTAssertEqual(config.timeoutIntervalForResource, 30, accuracy: 0.001)
+        XCTAssertFalse(config.waitsForConnectivity)
+    }
+
+    func testShouldRetryTransportError_onlyRetriesSelectedTransientFailures() {
+        XCTAssertTrue(
+            GroqAPI.shouldRetryTransportError(NSError(domain: NSURLErrorDomain, code: NSURLErrorTimedOut, userInfo: nil))
+        )
+        XCTAssertTrue(
+            GroqAPI.shouldRetryTransportError(
+                NSError(domain: NSURLErrorDomain, code: NSURLErrorNetworkConnectionLost, userInfo: nil)
+            )
+        )
+        XCTAssertTrue(
+            GroqAPI.shouldRetryTransportError(
+                NSError(domain: NSURLErrorDomain, code: NSURLErrorSecureConnectionFailed, userInfo: nil)
+            )
+        )
+        XCTAssertFalse(
+            GroqAPI.shouldRetryTransportError(
+                NSError(domain: NSURLErrorDomain, code: NSURLErrorNotConnectedToInternet, userInfo: nil)
+            )
+        )
+    }
+
+    func testTransportErrorName_returnsStableDiagnosticLabels() {
+        XCTAssertEqual(
+            GroqAPI.transportErrorName(
+                for: NSError(domain: NSURLErrorDomain, code: NSURLErrorTimedOut, userInfo: nil)
+            ),
+            "timed_out"
+        )
+        XCTAssertEqual(
+            GroqAPI.transportErrorName(
+                for: NSError(domain: NSURLErrorDomain, code: NSURLErrorDNSLookupFailed, userInfo: nil)
+            ),
+            "dns_lookup_failed"
+        )
+        XCTAssertEqual(
+            GroqAPI.transportErrorName(
+                for: NSError(domain: NSURLErrorDomain, code: -999_999, userInfo: nil)
+            ),
+            "code_-999999"
+        )
+    }
+
     func testErrorDescription_usesAppOwnedCopyWhileDiagnosticSummaryPreservesProviderDetail() {
         let forbidden = GroqAPI.TranscriptionError.forbidden("Provider says forbidden for org")
         XCTAssertEqual(forbidden.errorDescription, AppStrings.Errors.accessDenied)
