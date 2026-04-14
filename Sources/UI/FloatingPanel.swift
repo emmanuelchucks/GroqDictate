@@ -2,12 +2,7 @@ import Cocoa
 import QuartzCore
 
 final class FloatingPanel: NSPanel {
-    private enum KeyCode {
-        static let escape: UInt16 = 53
-    }
-
     let waveformView: WaveformView
-    var onEscapePress: (() -> Void)?
 
     init() {
         waveformView = WaveformView(frame: NSRect(x: 0, y: 0, width: 320, height: 100))
@@ -31,22 +26,13 @@ final class FloatingPanel: NSPanel {
         contentView = waveformView
     }
 
-    override var canBecomeKey: Bool {
-        true
-    }
-
-    override var canBecomeMain: Bool {
-        false
-    }
-
     func show() {
         guard let screen = NSScreen.main else { return }
         let x = screen.visibleFrame.midX - frame.width / 2
         let y = screen.visibleFrame.maxY - 140
         setFrameOrigin(NSPoint(x: x, y: y))
         alphaValue = 1
-        makeKeyAndOrderFront(nil)
-        makeFirstResponder(contentView)
+        orderFront(nil)
         AppLog.audit("floating panel shown", category: .ui)
     }
 
@@ -55,21 +41,6 @@ final class FloatingPanel: NSPanel {
         waveformView.setIdle()
         orderOut(nil)
         AppLog.audit("floating panel dismissed", category: .ui)
-    }
-
-    override func sendEvent(_ event: NSEvent) {
-        if event.type == .keyDown, handleKeyDown(keyCode: event.keyCode) {
-            return
-        }
-        super.sendEvent(event)
-    }
-
-    @discardableResult
-    func handleKeyDown(keyCode: UInt16) -> Bool {
-        guard keyCode == KeyCode.escape else { return false }
-        AppLog.audit("escape observed source=panel_keydown consumed=true", category: .hotkey)
-        onEscapePress?()
-        return true
     }
 }
 

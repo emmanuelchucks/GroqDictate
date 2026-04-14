@@ -77,7 +77,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private func wireHotkeys() {
         hotkeys.onRightCommandPress = { [weak self] in self?.workflow.toggle(source: "right_command") }
         hotkeys.onEscapePress = { [weak self] in self?.workflow.handleEscape(source: "global_escape") }
-        panel.onEscapePress = { [weak self] in self?.workflow.handleEscape(source: "panel_escape") }
         hotkeys.shouldConsumeEscape = { [weak self] in
             self?.workflow.shouldConsumeEscape ?? false
         }
