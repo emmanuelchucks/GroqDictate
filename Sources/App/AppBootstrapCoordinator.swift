@@ -4,9 +4,10 @@ final class AppBootstrapCoordinator {
     private let preflightMicrophone: () -> PermissionService.MicrophoneStatus
     private let requestMicrophoneAccess: (@escaping (PermissionService.MicrophoneStatus) -> Void) -> Void
     private let preflightAccessibility: () -> PermissionService.AccessibilityStatus
-    private let requestAccessibilityAccess: (Bool) -> Void
+    private let requestAccessibilityAccess: (Bool) -> PermissionService.AccessibilityStatus
     private let preflightListenEventAccess: () -> PermissionService.EventAccessStatus
-    private let requestListenEventAccess: () -> Void
+    private let requestListenEventAccess: () -> PermissionService.EventAccessStatus
+    private let preflightPostEventAccess: () -> PermissionService.EventAccessStatus
     private let startHotkeys: () -> HotkeyMonitor.StartStatus
     private let reactivateApp: (NSRunningApplication?) -> Void
     private let dispatchToMain: (@escaping () -> Void) -> Void
@@ -22,12 +23,13 @@ final class AppBootstrapCoordinator {
             requestMicrophoneAccess: permissionService.requestMicrophoneAccess,
             preflightAccessibility: permissionService.preflightAccessibility,
             requestAccessibilityAccess: { prompt in
-                _ = permissionService.requestAccessibilityAccess(prompt: prompt)
+                permissionService.requestAccessibilityAccess(prompt: prompt)
             },
             preflightListenEventAccess: permissionService.preflightListenEventAccess,
             requestListenEventAccess: {
-                _ = permissionService.requestListenEventAccess()
+                permissionService.requestListenEventAccess()
             },
+            preflightPostEventAccess: permissionService.preflightPostEventAccess,
             startHotkeys: startHotkeys,
             reactivateApp: reactivateApp,
             dispatchToMain: dispatchToMain
@@ -38,9 +40,10 @@ final class AppBootstrapCoordinator {
         preflightMicrophone: @escaping () -> PermissionService.MicrophoneStatus,
         requestMicrophoneAccess: @escaping (@escaping (PermissionService.MicrophoneStatus) -> Void) -> Void,
         preflightAccessibility: @escaping () -> PermissionService.AccessibilityStatus,
-        requestAccessibilityAccess: @escaping (Bool) -> Void,
+        requestAccessibilityAccess: @escaping (Bool) -> PermissionService.AccessibilityStatus,
         preflightListenEventAccess: @escaping () -> PermissionService.EventAccessStatus,
-        requestListenEventAccess: @escaping () -> Void,
+        requestListenEventAccess: @escaping () -> PermissionService.EventAccessStatus,
+        preflightPostEventAccess: @escaping () -> PermissionService.EventAccessStatus,
         startHotkeys: @escaping () -> HotkeyMonitor.StartStatus,
         reactivateApp: @escaping (NSRunningApplication?) -> Void,
         dispatchToMain: @escaping (@escaping () -> Void) -> Void = { DispatchQueue.main.async(execute: $0) }
@@ -51,6 +54,7 @@ final class AppBootstrapCoordinator {
         self.requestAccessibilityAccess = requestAccessibilityAccess
         self.preflightListenEventAccess = preflightListenEventAccess
         self.requestListenEventAccess = requestListenEventAccess
+        self.preflightPostEventAccess = preflightPostEventAccess
         self.startHotkeys = startHotkeys
         self.reactivateApp = reactivateApp
         self.dispatchToMain = dispatchToMain
@@ -60,10 +64,15 @@ final class AppBootstrapCoordinator {
         reactivateAppAfterBootstrap: Bool = false,
         appToReactivate: NSRunningApplication? = nil
     ) {
+        AppLog.audit("runtime bootstrap started", category: .app)
         if preflightMicrophone() == .notDetermined {
-            requestMicrophoneAccess { [weak self] _ in
+            requestMicrophoneAccess { [weak self] status in
                 guard let self else { return }
                 self.dispatchToMain {
+                    AppLog.audit(
+                        "microphone access request completed status=\(PermissionService.describe(status))",
+                        category: .app
+                    )
                     self.finishRuntimeBootstrap(
                         reactivateAppAfterBootstrap: reactivateAppAfterBootstrap,
                         appToReactivate: appToReactivate
@@ -83,7 +92,9 @@ final class AppBootstrapCoordinator {
         reactivateAppAfterBootstrap: Bool,
         appToReactivate: NSRunningApplication?
     ) {
+        logPermissionSnapshot(phase: "bootstrap_pre_request")
         requestAccessibilityAndListenEventAccessIfNeeded()
+        logPermissionSnapshot(phase: "bootstrap_post_request")
 
         let hotkeyStatus = startHotkeys()
         handleHotkeyMonitorStartStatus(hotkeyStatus)
@@ -96,14 +107,22 @@ final class AppBootstrapCoordinator {
     private func requestAccessibilityAndListenEventAccessIfNeeded() {
         if preflightAccessibility() == .notTrusted {
             AppLog.event("accessibility not trusted, prompting user", category: .app)
-            requestAccessibilityAccess(true)
+            let status = requestAccessibilityAccess(true)
+            AppLog.audit(
+                "accessibility access request completed status=\(PermissionService.describe(status))",
+                category: .app
+            )
         } else {
-            AppLog.debug("accessibility already trusted", category: .app)
+            AppLog.audit("accessibility already trusted", category: .app)
         }
 
         if preflightListenEventAccess() == .denied {
             AppLog.event("listen-event access not granted, prompting user", category: .app)
-            requestListenEventAccess()
+            let status = requestListenEventAccess()
+            AppLog.audit(
+                "listen-event access request completed status=\(PermissionService.describe(status))",
+                category: .app
+            )
         }
     }
 
@@ -123,9 +142,27 @@ final class AppBootstrapCoordinator {
         AppLog.metric(
             "hotkey_monitor_start",
             category: .hotkey,
+            level: .audit,
             values: [
                 "status": status.startupDescription
             ]
+        )
+    }
+
+    private func logPermissionSnapshot(phase: String) {
+        let snapshot = PermissionService.Snapshot(
+            microphone: preflightMicrophone(),
+            accessibility: preflightAccessibility(),
+            listenEvent: preflightListenEventAccess(),
+            postEvent: preflightPostEventAccess()
+        )
+
+        AppLog.metric(
+            "permission_snapshot",
+            category: .app,
+            level: .audit,
+            values: PermissionService.snapshotValues(snapshot)
+                .merging(["phase": phase], uniquingKeysWith: { _, new in new })
         )
     }
 }

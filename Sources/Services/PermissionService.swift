@@ -48,6 +48,15 @@ final class PermissionService {
         )
     }
 
+    static func snapshotValues(_ snapshot: Snapshot) -> [String: String] {
+        [
+            "microphone": describe(snapshot.microphone),
+            "accessibility": describe(snapshot.accessibility),
+            "listen_event": describe(snapshot.listenEvent),
+            "post_event": describe(snapshot.postEvent)
+        ]
+    }
+
     static func guidanceActions(for snapshot: Snapshot) -> [GuidanceAction] {
         var actions: [GuidanceAction] = []
 
@@ -124,5 +133,30 @@ final class PermissionService {
     func requestPostEventAccess() -> EventAccessStatus {
         guard #available(macOS 10.15, *) else { return .unavailable }
         return CGRequestPostEventAccess() ? .granted : .denied
+    }
+
+    static func describe(_ status: MicrophoneStatus) -> String {
+        switch status {
+        case .notDetermined: return "not_determined"
+        case .authorized: return "authorized"
+        case .denied: return "denied"
+        case .restricted: return "restricted"
+        case .unknown: return "unknown"
+        }
+    }
+
+    static func describe(_ status: AccessibilityStatus) -> String {
+        switch status {
+        case .trusted: return "trusted"
+        case .notTrusted: return "not_trusted"
+        }
+    }
+
+    static func describe(_ status: EventAccessStatus) -> String {
+        switch status {
+        case .granted: return "granted"
+        case .denied: return "denied"
+        case .unavailable: return "unavailable"
+        }
     }
 }

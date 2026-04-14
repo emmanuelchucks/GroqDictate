@@ -69,14 +69,14 @@ final class HotkeyMonitor {
 
     @discardableResult
     func start() -> StartStatus {
-        AppLog.debug("starting hotkey monitor", category: .hotkey)
+        AppLog.audit("starting hotkey monitor", category: .hotkey)
         let status = installEventTapOrFallback()
         AppLog.event("hotkey monitor start status=\(status.startupDescription)", category: .hotkey)
         return status
     }
 
     func stop() {
-        AppLog.debug("stopping hotkey monitor", category: .hotkey)
+        AppLog.audit("stopping hotkey monitor", category: .hotkey)
         removeAllMonitors()
     }
 
@@ -198,8 +198,12 @@ final class HotkeyMonitor {
 
         let keyCode = Int(event.getIntegerValueField(.keyboardEventKeycode))
 
-        if type == .keyDown, keyCode == KeyCode.escape, consumeEscapeIfNeeded(isFallback: false) {
-            return nil
+        if type == .keyDown, keyCode == KeyCode.escape {
+            let consumed = consumeEscapeIfNeeded(isFallback: false)
+            if !consumed {
+                AppLog.audit("escape observed source=event_tap consumed=false", category: .hotkey)
+            }
+            return consumed ? nil : Unmanaged.passUnretained(event)
         }
 
         if type == .flagsChanged, keyCode == KeyCode.rightCommand {
@@ -213,7 +217,11 @@ final class HotkeyMonitor {
     @discardableResult
     func handleFallbackEvent(type: NSEvent.EventType, keyCode: UInt16, commandModifierActive: Bool) -> Bool {
         if type == .keyDown, keyCode == KeyCode.escape {
-            return consumeEscapeIfNeeded(isFallback: true)
+            let consumed = consumeEscapeIfNeeded(isFallback: true)
+            if !consumed {
+                AppLog.audit("escape observed source=fallback_monitor consumed=false", category: .hotkey)
+            }
+            return consumed
         }
 
         guard type == .flagsChanged else { return false }
@@ -232,14 +240,12 @@ final class HotkeyMonitor {
     @discardableResult
     func consumeEscapeIfNeeded(isFallback: Bool) -> Bool {
         guard shouldConsumeEscape?() ?? false else { return false }
-        if isFallback {
-            AppLog.debug(
-                "escape handled in degraded hotkey mode; fallback monitors cannot suppress the key globally",
-                category: .hotkey
-            )
-        } else {
-            AppLog.debug("escape consumed", category: .hotkey)
-        }
+        AppLog.audit(
+            isFallback
+                ? "escape observed source=fallback_monitor consumed=true suppressible=false"
+                : "escape observed source=event_tap consumed=true suppressible=true",
+            category: .hotkey
+        )
         dispatchToMain { [weak self] in self?.onEscapePress?() }
         return true
     }
@@ -248,14 +254,12 @@ final class HotkeyMonitor {
     func handleRightCommandTransition(isDown: Bool, isFallback: Bool) -> Bool {
         if isDown && !rightCommandDown {
             rightCommandDown = true
-            if isFallback {
-                AppLog.debug(
-                    "right command observed in degraded hotkey mode; fallback monitors cannot suppress the key globally",
-                    category: .hotkey
-                )
-            } else {
-                AppLog.debug("right command pressed", category: .hotkey)
-            }
+            AppLog.audit(
+                isFallback
+                    ? "right command observed source=fallback_monitor suppressible=false"
+                    : "right command observed source=event_tap suppressible=true",
+                category: .hotkey
+            )
             dispatchToMain { [weak self] in self?.onRightCommandPress?() }
             return true
         }

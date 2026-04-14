@@ -36,10 +36,12 @@ final class AppBootstrapCoordinatorTests: XCTestCase {
             preflightAccessibility: { .notTrusted },
             requestAccessibilityAccess: { prompt in
                 accessibilityPromptValues.append(prompt)
+                return .notTrusted
             },
             preflightListenEventAccess: { .denied },
             requestListenEventAccess: {
                 listenEventPromptCount += 1
+                return .denied
             }
         )
 
@@ -71,9 +73,10 @@ final class AppBootstrapCoordinatorTests: XCTestCase {
         preflightMicrophone: @escaping () -> PermissionService.MicrophoneStatus = { .authorized },
         requestMicrophoneAccess: @escaping (@escaping (PermissionService.MicrophoneStatus) -> Void) -> Void = { _ in },
         preflightAccessibility: @escaping () -> PermissionService.AccessibilityStatus = { .trusted },
-        requestAccessibilityAccess: @escaping (Bool) -> Void = { _ in },
+        requestAccessibilityAccess: @escaping (Bool) -> PermissionService.AccessibilityStatus = { _ in .trusted },
         preflightListenEventAccess: @escaping () -> PermissionService.EventAccessStatus = { .granted },
-        requestListenEventAccess: @escaping () -> Void = {},
+        requestListenEventAccess: @escaping () -> PermissionService.EventAccessStatus = { .granted },
+        preflightPostEventAccess: @escaping () -> PermissionService.EventAccessStatus = { .granted },
         startHotkeys: @escaping () -> HotkeyMonitor.StartStatus = { .ready },
         reactivateApp: @escaping (NSRunningApplication?) -> Void = { _ in }
     ) -> AppBootstrapCoordinator {
@@ -84,6 +87,7 @@ final class AppBootstrapCoordinatorTests: XCTestCase {
             requestAccessibilityAccess: requestAccessibilityAccess,
             preflightListenEventAccess: preflightListenEventAccess,
             requestListenEventAccess: requestListenEventAccess,
+            preflightPostEventAccess: preflightPostEventAccess,
             startHotkeys: startHotkeys,
             reactivateApp: reactivateApp,
             dispatchToMain: { $0() }

@@ -61,4 +61,16 @@ final class HotkeyMonitorTests: XCTestCase {
             monitor.handleFallbackEvent(type: .flagsChanged, keyCode: 54, commandModifierActive: false)
         )
     }
+
+    func testFloatingPanel_handleKeyDown_dispatchesEscapeOnly() {
+        let panel = FloatingPanel()
+        var escapeCount = 0
+        panel.onEscapePress = { escapeCount += 1 }
+
+        XCTAssertFalse(panel.handleKeyDown(keyCode: 0))
+        XCTAssertEqual(escapeCount, 0)
+
+        XCTAssertTrue(panel.handleKeyDown(keyCode: 53))
+        XCTAssertEqual(escapeCount, 1)
+    }
 }

@@ -13,13 +13,16 @@ DIST_DIR := dist
 HOST_ARCH := $(shell uname -m)
 DEV_DESTINATION := platform=macOS,arch=$(HOST_ARCH)
 RELEASE_DESTINATION := generic/platform=macOS
-CI_DESTINATION := platform=macOS
+VALIDATE_DESTINATION := platform=macOS
+LOCAL_TEST_DESTINATION := $(DEV_DESTINATION)
 
 DEBUG_APP := $(DERIVED_DATA)/Build/Products/Debug/$(APP_NAME).app
 DEBUG_EXECUTABLE := $(DEBUG_APP)/Contents/MacOS/$(APP_NAME)
 RELEASE_APP_UNSIGNED := $(DERIVED_DATA)/Build/Products/Release/$(APP_NAME).app
-CI_RESULT_DIR := $(BUILD_ROOT)/TestResults
-CI_RESULT_BUNDLE := $(CI_RESULT_DIR)/$(APP_NAME).xcresult
+VALIDATE_RESULT_DIR := $(BUILD_ROOT)/ValidateResults
+VALIDATE_RESULT_BUNDLE := $(VALIDATE_RESULT_DIR)/$(APP_NAME).xcresult
+LOCAL_TEST_RESULT_DIR := $(BUILD_ROOT)/LocalTestResults
+LOCAL_TEST_RESULT_BUNDLE := $(LOCAL_TEST_RESULT_DIR)/$(APP_NAME).xcresult
 
 APP_PATH ?= /Applications/$(APP_NAME).app
 INSTALLED_EXECUTABLE := $(APP_PATH)/Contents/MacOS/$(APP_NAME)
@@ -33,14 +36,15 @@ NOTARY_PROFILE ?=
 DEVELOPMENT_TEAM ?= G729H95F8U
 KEYCHAIN_SERVICE ?= $(BUNDLE_ID)
 KEYCHAIN_ACCOUNT ?= groq-api-key
-CI_SIGNING_FLAGS := CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO CODE_SIGN_IDENTITY=
+VALIDATE_SIGNING_FLAGS := CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO CODE_SIGN_IDENTITY=
 
 # Optional behavior flags
 RESET ?= 0
 INSTALL ?= 0
 DEBUG_PERSIST ?= 0
+TEST_ONLY ?=
 
-.PHONY: help doctor clean reset generate verify-generated-project ci dev release
+.PHONY: help doctor clean reset generate verify-generated-project validate dev run test release
 
 help:
 	@echo "GroqDictate pipeline (simplified)"
@@ -48,8 +52,10 @@ help:
 	@echo "Core commands:"
 	@echo "  make generate               Regenerate $(PROJECT) from project.yml"
 	@echo "  make verify-generated-project  Ensure committed $(PROJECT) matches project.yml"
-	@echo "  make ci                     Regenerate, verify, test, and unsigned Release build"
-	@echo "  make dev                     Build Debug, install to /Applications, run"
+	@echo "  make test                   Run signed local Debug tests"
+	@echo "  make validate               Run unsigned automation validation"
+	@echo "  make dev                    Build Debug, install to /Applications, run"
+	@echo "  make run                    Alias for make dev"
 	@echo "  make release                Build Release, sign, notarize, verify"
 	@echo "  make reset FORCE=1          Remove local app/system traces for clean testing"
 	@echo "  make doctor                 Verify required local tooling"
@@ -59,12 +65,15 @@ help:
 	@echo "  RESET=1                     Run reset first (supported by make dev)"
 	@echo "  INSTALL=1                   Install notarized release app to APP_PATH"
 	@echo "  DEBUG_PERSIST=1             Enable persistent debug logs via app defaults"
+	@echo "  TEST_ONLY=Suite/testName    Filter make test to a specific test"
 	@echo ""
 	@echo "Release variables:"
 	@echo "  DEVELOPER_ID_APP='Developer ID Application: Name (TEAMID)'"
 	@echo "  NOTARY_PROFILE='notarytool-keychain-profile'"
 	@echo ""
 	@echo "Examples:"
+	@echo "  make test"
+	@echo "  make test TEST_ONLY=GroqDictateTests/HotkeyMonitorTests"
 	@echo "  make dev RESET=1 FORCE=1 DEBUG_PERSIST=1"
 	@echo "  make release DEVELOPER_ID_APP='Developer ID Application: Name (TEAMID)' NOTARY_PROFILE='profile' INSTALL=1 DEBUG_PERSIST=1"
 
@@ -99,19 +108,19 @@ verify-generated-project:
 	}; \
 	echo "✅ Generated project matches project.yml"
 
-ci:
+validate:
 	@set -euo pipefail; \
 	$(MAKE) --no-print-directory verify-generated-project; \
-	rm -rf "$(CI_RESULT_DIR)"; \
-	mkdir -p "$(CI_RESULT_DIR)"; \
+	rm -rf "$(VALIDATE_RESULT_DIR)"; \
+	mkdir -p "$(VALIDATE_RESULT_DIR)"; \
 	xcodebuild \
 		-project "$(PROJECT)" \
 		-scheme "$(SCHEME)" \
 		-configuration Debug \
-		-destination "$(CI_DESTINATION)" \
+		-destination "$(VALIDATE_DESTINATION)" \
 		-derivedDataPath "$(DERIVED_DATA)" \
-		-resultBundlePath "$(CI_RESULT_BUNDLE)" \
-		$(CI_SIGNING_FLAGS) \
+		-resultBundlePath "$(VALIDATE_RESULT_BUNDLE)" \
+		$(VALIDATE_SIGNING_FLAGS) \
 		test; \
 	xcodebuild \
 		-project "$(PROJECT)" \
@@ -119,10 +128,32 @@ ci:
 		-configuration Release \
 		-destination "$(RELEASE_DESTINATION)" \
 		-derivedDataPath "$(DERIVED_DATA)" \
-		$(CI_SIGNING_FLAGS) \
+		$(VALIDATE_SIGNING_FLAGS) \
 		build; \
-	test -d "$(CI_RESULT_BUNDLE)" || { echo "❌ Missing xcresult bundle at $(CI_RESULT_BUNDLE)"; exit 1; }; \
-	echo "✅ CI validation complete"
+	test -d "$(VALIDATE_RESULT_BUNDLE)" || { echo "❌ Missing xcresult bundle at $(VALIDATE_RESULT_BUNDLE)"; exit 1; }; \
+	echo "✅ Validation complete"
+
+test:
+	@set -euo pipefail; \
+	$(MAKE) --no-print-directory verify-generated-project; \
+	rm -rf "$(LOCAL_TEST_RESULT_DIR)"; \
+	mkdir -p "$(LOCAL_TEST_RESULT_DIR)"; \
+	test_filter_args=""; \
+	if [ -n "$(TEST_ONLY)" ]; then \
+		test_filter_args="-only-testing:$(TEST_ONLY)"; \
+	fi; \
+	xcodebuild \
+		-project "$(PROJECT)" \
+		-scheme "$(SCHEME)" \
+		-configuration Debug \
+		-destination "$(LOCAL_TEST_DESTINATION)" \
+		-derivedDataPath "$(DERIVED_DATA)" \
+		-resultBundlePath "$(LOCAL_TEST_RESULT_BUNDLE)" \
+		DEVELOPMENT_TEAM="$(DEVELOPMENT_TEAM)" \
+		$$test_filter_args \
+		test; \
+	test -d "$(LOCAL_TEST_RESULT_BUNDLE)" || { echo "❌ Missing xcresult bundle at $(LOCAL_TEST_RESULT_BUNDLE)"; exit 1; }; \
+	echo "✅ Signed local tests complete"
 
 clean:
 	@rm -rf "$(BUILD_ROOT)" "$(DIST_DIR)"
@@ -181,6 +212,8 @@ dev:
 	fi; \
 	echo "✅ Debug app installed: $(APP_PATH)"; \
 	open -a "$(APP_PATH)"
+
+run: dev
 
 release:
 	@set -euo pipefail; \

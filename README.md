@@ -49,11 +49,27 @@ If auto-paste (PostEvent) is denied, GroqDictate copies the transcript to clipbo
 ```bash
 make doctor
 make generate
-make ci
+make test
+make validate
 make dev
+make run
 ```
 
 `project.yml` is the source of truth for the Xcode project. Regenerate `GroqDictate.xcodeproj` with `make generate` after changing targets or build settings.
+
+Prefer the Makefile targets over ad hoc `xcodebuild` commands for local work. `make test` runs signed local Debug tests; `make validate` is the unsigned automation validation path.
+
+Run signed local tests:
+
+```bash
+make test
+```
+
+Run a single signed local test:
+
+```bash
+make test TEST_ONLY=GroqDictateTests/HotkeyMonitorTests
+```
 
 Fresh local run with reset:
 

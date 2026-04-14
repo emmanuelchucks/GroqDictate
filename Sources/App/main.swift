@@ -32,7 +32,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     func applicationDidFinishLaunching(_ notification: Notification) {
-        AppLog.debug("application did finish launching", category: .app)
+        AppLog.audit("application did finish launching", category: .app)
         logRuntimeEnvironment()
         repairLaunchAtLoginRegistrationIfNeeded()
         shellCoordinator.installMenus()
@@ -40,10 +40,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         wireHotkeys()
 
         if Config.hasAPIKey {
+            AppLog.audit("startup branch=runtime has_api_key=true", category: .app)
             applyConfig()
             GroqAPI.warmConnection()
             bootstrapCoordinator.prepareForRuntimeUse()
         } else {
+            AppLog.audit("startup branch=onboarding has_api_key=false", category: .app)
             setupCoordinator.show(isOnboarding: true)
         }
     }
@@ -53,7 +55,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     func applicationShouldHandleReopen(_ sender: NSApplication, hasVisibleWindows flag: Bool) -> Bool {
-        AppLog.debug("reopen requested while state=\(workflow.currentStateDescription)", category: .app)
+        AppLog.audit("reopen requested state=\(workflow.currentStateDescription)", category: .app)
         switch workflow.state {
         case .idle:
             setupCoordinator.show(isOnboarding: !Config.hasAPIKey)
@@ -73,8 +75,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     private func wireHotkeys() {
-        hotkeys.onRightCommandPress = { [weak self] in self?.workflow.toggle() }
-        hotkeys.onEscapePress = { [weak self] in self?.workflow.handleEscape() }
+        hotkeys.onRightCommandPress = { [weak self] in self?.workflow.toggle(source: "right_command") }
+        hotkeys.onEscapePress = { [weak self] in self?.workflow.handleEscape(source: "global_escape") }
+        panel.onEscapePress = { [weak self] in self?.workflow.handleEscape(source: "panel_escape") }
         hotkeys.shouldConsumeEscape = { [weak self] in
             self?.workflow.shouldConsumeEscape ?? false
         }
@@ -84,6 +87,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         guard let config = Config.load() else { return }
         recorder.inputGain = config.inputGain
         recorder.selectedDeviceUID = config.micUID
+        AppLog.metric(
+            "config_applied",
+            category: .app,
+            level: .audit,
+            values: [
+                "input_gain": String(format: "%.1f", config.inputGain),
+                "mic_selected": config.micUID == nil ? "false" : "true",
+                "model": config.model
+            ]
+        )
     }
 
     private func makeBootstrapCoordinator() -> AppBootstrapCoordinator {
@@ -211,7 +224,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         AppLog.metric(
             "runtime_environment",
             category: .app,
-            level: .debug,
+            level: .audit,
             values: [
                 "bundle_id": bundleIdentifier,
                 "install_location": Self.installLocationCategory(for: bundleURL),

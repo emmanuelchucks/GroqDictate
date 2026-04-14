@@ -13,6 +13,7 @@ enum AppLog {
     }
 
     enum Level: String {
+        case audit
         case debug
         case event
         case error
@@ -20,17 +21,37 @@ enum AppLog {
 
     private static let subsystem = Bundle.main.bundleIdentifier ?? "com.groqdictate"
 
-    static func debug(_ message: @autoclosure () -> String, category: Category = .app) {
+    static func audit(
+        _ message: @autoclosure () -> String,
+        category: Category = .app,
+        metadata: [String: String]? = nil
+    ) {
+        write(level: .audit, message: message(), category: category, metadata: metadata)
+    }
+
+    static func debug(
+        _ message: @autoclosure () -> String,
+        category: Category = .app,
+        metadata: [String: String]? = nil
+    ) {
         guard AppConstants.Diagnostics.debugLoggingEnabled else { return }
-        write(level: .debug, message: message(), category: category)
+        write(level: .debug, message: message(), category: category, metadata: metadata)
     }
 
-    static func event(_ message: @autoclosure () -> String, category: Category = .app) {
-        write(level: .event, message: message(), category: category)
+    static func event(
+        _ message: @autoclosure () -> String,
+        category: Category = .app,
+        metadata: [String: String]? = nil
+    ) {
+        write(level: .event, message: message(), category: category, metadata: metadata)
     }
 
-    static func error(_ message: @autoclosure () -> String, category: Category = .app) {
-        write(level: .error, message: message(), category: category)
+    static func error(
+        _ message: @autoclosure () -> String,
+        category: Category = .app,
+        metadata: [String: String]? = nil
+    ) {
+        write(level: .error, message: message(), category: category, metadata: metadata)
     }
 
     static func metric(
@@ -67,6 +88,8 @@ enum AppLog {
         let logger = Logger(subsystem: subsystem, category: category.rawValue)
 
         switch level {
+        case .audit:
+            logger.notice("\(message, privacy: .public)")
         case .debug:
             logger.debug("\(message, privacy: .public)")
         case .event:
@@ -88,8 +111,9 @@ enum DiagnosticsStore {
         let metadata: [String: String]?
     }
 
-    private static let schemaVersion = 1
+    private static let schemaVersion = 2
     private static let lock = NSLock()
+    private static let runID = UUID().uuidString
     private static let encoder: JSONEncoder = {
         let encoder = JSONEncoder()
         encoder.outputFormatting = [.sortedKeys]
@@ -117,7 +141,7 @@ enum DiagnosticsStore {
             category: category,
             level: level,
             message: sanitize(message),
-            metadata: sanitize(metadata)
+            metadata: sanitize(mergedMetadata(metadata))
         )
         appendEntryLocked(entry)
     }
@@ -162,6 +186,49 @@ enum DiagnosticsStore {
             sanitized[key] = sanitize(value)
         }
         return sanitized.isEmpty ? nil : sanitized
+    }
+
+    private static func mergedMetadata(_ metadata: [String: String]?) -> [String: String] {
+        commonMetadata().merging(metadata ?? [:], uniquingKeysWith: { current, _ in current })
+    }
+
+    private static func commonMetadata() -> [String: String] {
+        var metadata: [String: String] = [
+            "run_id": runID,
+            "pid": String(ProcessInfo.processInfo.processIdentifier),
+            "bundle_id": Bundle.main.bundleIdentifier ?? "unknown",
+            "build_config": buildConfigurationDescription(),
+            "install_location": installLocationCategory()
+        ]
+
+        if let appVersion = Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String {
+            metadata["app_version"] = appVersion
+        }
+        if let buildVersion = Bundle.main.object(forInfoDictionaryKey: kCFBundleVersionKey as String) as? String {
+            metadata["build_number"] = buildVersion
+        }
+
+        return metadata
+    }
+
+    private static func buildConfigurationDescription() -> String {
+        #if DEBUG
+        return "debug"
+        #else
+        return "release"
+        #endif
+    }
+
+    private static func installLocationCategory() -> String {
+        let path = Bundle.main.bundleURL.resolvingSymlinksInPath().standardizedFileURL.path
+
+        if path.hasPrefix("/Applications/") {
+            return "applications"
+        }
+        if path.contains("/DerivedData/") {
+            return "derived_data"
+        }
+        return "other"
     }
 
     private static func prepareStoreIfNeededLocked() {

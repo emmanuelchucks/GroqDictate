@@ -19,7 +19,19 @@ Useful commands:
 
 ```bash
 make doctor
+make test
 make dev
+```
+
+Prefer Makefile targets over raw `xcodebuild` commands for normal local work.
+- `make test` runs signed local Debug tests.
+- `make validate` runs the unsigned automation validation path.
+- `make run` is a short alias for `make dev`.
+
+Run a single signed local test:
+
+```bash
+make test TEST_ONLY=GroqDictateTests/HotkeyMonitorTests
 ```
 
 If you want a clean local run:
@@ -38,7 +50,7 @@ make dev RESET=1 FORCE=1
 Build check:
 
 ```bash
-xcodebuild -project GroqDictate.xcodeproj -scheme GroqDictate -configuration Debug -destination "platform=macOS,arch=$(uname -m)" CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO CODE_SIGN_IDENTITY="" build
+make test
 ```
 
 ## Tests

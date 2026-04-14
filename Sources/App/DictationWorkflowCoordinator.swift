@@ -73,7 +73,9 @@ final class DictationWorkflowCoordinator {
     private var shownPermissionGuidanceActions = Set<PermissionService.GuidanceAction>()
     private var lastAudioFileURL: URL?
     private var currentTranscriptionRequest: TranscriptionRequestHandle?
+    private var currentWorkflowID: String?
     private var panelNoticeToken = UUID()
+    private var panelNoticeWorkflowOutcome: String?
     private var pendingPasteToken = UUID()
 
     init(
@@ -127,7 +129,11 @@ final class DictationWorkflowCoordinator {
     func handleFocusedAppUpdate(_ app: NSRunningApplication?) {
         guard shouldTrackFocusedApp else { return }
         dictationTargetApp = app
-        AppLog.debug("dictation target updated to \(describe(app))", category: .focus)
+        AppLog.audit(
+            "dictation target updated to \(describe(app))",
+            category: .focus,
+            metadata: workflowMetadata(includeTargetApp: true)
+        )
     }
 
     func presentRuntimePanelForReopen() {
@@ -137,11 +143,15 @@ final class DictationWorkflowCoordinator {
         }
     }
 
-    func toggle() {
-        AppLog.debug("toggle received in state=\(describe(state))", category: .hotkey)
+    func toggle(source: String = "unknown") {
+        AppLog.audit(
+            "toggle received source=\(source) state=\(describe(state))",
+            category: .hotkey,
+            metadata: workflowMetadata(["input_source": source], includeTargetApp: true)
+        )
         switch Self.toggleAction(for: state) {
         case .startRecording:
-            startRecording()
+            startRecording(triggerSource: source)
         case .stopAndTranscribe:
             stopAndTranscribe()
         case .handleError(let kind):
@@ -151,8 +161,12 @@ final class DictationWorkflowCoordinator {
         }
     }
 
-    func handleEscape() {
-        AppLog.debug("escape received in state=\(describe(state))", category: .hotkey)
+    func handleEscape(source: String = "unknown") {
+        AppLog.audit(
+            "escape received source=\(source) state=\(describe(state))",
+            category: .hotkey,
+            metadata: workflowMetadata(["input_source": source], includeTargetApp: true)
+        )
         switch Self.escapeAction(for: state) {
         case .cancelActiveWork:
             cancel()
@@ -165,7 +179,7 @@ final class DictationWorkflowCoordinator {
         }
     }
 
-    private func startRecording() {
+    private func startRecording(triggerSource: String = "unknown") {
         let micStatus = AVCaptureDevice.authorizationStatus(for: .audio)
         if micStatus == .denied || micStatus == .restricted {
             AppLog.event("recording blocked: microphone permission denied", category: .audio)
@@ -174,7 +188,12 @@ final class DictationWorkflowCoordinator {
         }
 
         dictationTargetApp = focusTracker.currentExternalApp()
-        AppLog.debug("recording requested", category: .audio)
+        beginWorkflow(triggerSource: triggerSource)
+        AppLog.audit(
+            "recording requested",
+            category: .audio,
+            metadata: workflowMetadata(["input_source": triggerSource], includeTargetApp: true)
+        )
         invalidatePanelNotice()
         applyConfig()
 
@@ -185,6 +204,7 @@ final class DictationWorkflowCoordinator {
             transition(to: .recording, reason: "recording started")
         } catch {
             recorder.cleanup()
+            completeWorkflowIfNeeded(outcome: "recording_start_failed", reason: "recorder start failed")
             AppLog.error("failed to start recording (\(error.localizedDescription))", category: .audio)
             showError(kind: .other, message: AppStrings.Errors.micError, action: .dismissOnly)
         }
@@ -217,7 +237,11 @@ final class DictationWorkflowCoordinator {
     }
 
     private func transcribe(fileURL: URL, config: Config) {
-        AppLog.debug("starting transcription model=\(config.model)", category: .network)
+        AppLog.audit(
+            "transcription started model=\(config.model)",
+            category: .network,
+            metadata: workflowMetadata(["model": config.model], includeTargetApp: true)
+        )
         currentTranscriptionRequest = transcriptionEngine.transcribe(fileURL: fileURL, config: config) { [weak self] result in
             DispatchQueue.main.async {
                 guard let self else { return }
@@ -229,11 +253,21 @@ final class DictationWorkflowCoordinator {
 
                 switch result {
                 case .success(let text):
+                    AppLog.audit(
+                        "transcription succeeded chars=\(text.count)",
+                        category: .network,
+                        metadata: self.workflowMetadata(["transcription_chars": String(text.count)], includeTargetApp: true)
+                    )
                     AppLog.debug("transcription success chars=\(text.count)", category: .network)
                     self.recorder.cleanup()
                     self.lastAudioFileURL = nil
                     self.pasteText(text)
                 case .failure(let error):
+                    AppLog.audit(
+                        "transcription failed kind=\(error.diagnosticCode)",
+                        category: .network,
+                        metadata: self.workflowMetadata(["error_kind": error.diagnosticCode], includeTargetApp: true)
+                    )
                     if let detail = error.diagnosticSummary, !detail.isEmpty {
                         AppLog.debug(
                             "transcription failed kind=\(error.diagnosticCode) detail=\(detail)",
@@ -251,13 +285,14 @@ final class DictationWorkflowCoordinator {
     private func retryTranscription() {
         guard let fileURL = lastAudioFileURL, FileManager.default.fileExists(atPath: fileURL.path) else {
             AppLog.debug("retry requested but no last audio file; starting new recording", category: .network)
+            completeWorkflowIfNeeded(outcome: "retry_without_audio", reason: "retry requested without retained audio")
             transition(to: .idle, reason: "retry fallback to new recording")
             ui.dismissPanel()
-            startRecording()
+            startRecording(triggerSource: "retry_fallback")
             return
         }
 
-        AppLog.debug("retrying transcription for \(fileURL.lastPathComponent)", category: .network)
+        AppLog.audit("retrying transcription", category: .network, metadata: workflowMetadata(includeTargetApp: true))
 
         guard let config = loadConfig() else {
             showError(kind: .invalidKey, message: AppStrings.Errors.invalidKey, action: .settings)
@@ -270,25 +305,37 @@ final class DictationWorkflowCoordinator {
     }
 
     private func cancel() {
-        AppLog.debug("cancel requested in state=\(describe(state))", category: .app)
+        AppLog.audit(
+            "cancel requested in state=\(describe(state))",
+            category: .app,
+            metadata: workflowMetadata(includeTargetApp: true)
+        )
         if case .recording = state {
+            AppLog.audit("recording stop issued process_recording=false", category: .audio, metadata: workflowMetadata())
             recorder.stop(processRecording: false) { _ in }
+        }
+        if currentTranscriptionRequest != nil {
+            AppLog.audit("transcription request cancelled", category: .network, metadata: workflowMetadata())
         }
         currentTranscriptionRequest?.cancel()
         currentTranscriptionRequest = nil
         invalidatePendingPaste()
+        completeWorkflowIfNeeded(outcome: "cancelled", reason: "cancel requested")
         resetToIdle(reason: "cancel")
     }
 
     private func dismissNotice() {
-        AppLog.debug("dismissing notice state", category: .app)
+        AppLog.audit("dismissing notice state", category: .app, metadata: workflowMetadata(includeTargetApp: true))
+        if let outcome = panelNoticeWorkflowOutcome {
+            completeWorkflowIfNeeded(outcome: outcome, reason: "notice dismissed explicitly")
+        }
         invalidatePanelNotice()
         transition(to: .idle, reason: "notice dismissed")
         ui.dismissPanel()
     }
 
     private func dismissError() {
-        AppLog.debug("dismissing error state", category: .app)
+        AppLog.audit("dismissing error state", category: .app, metadata: workflowMetadata(includeTargetApp: true))
         resetToIdle(reason: "error dismissed")
     }
 
@@ -314,14 +361,22 @@ final class DictationWorkflowCoordinator {
     }
 
     private func showError(kind: ErrorKind, message: String, action: WaveformView.ErrorAction) {
-        AppLog.debug("showing error kind=\(describe(kind))", category: .ui)
+        AppLog.audit(
+            "showing error kind=\(describe(kind))",
+            category: .ui,
+            metadata: workflowMetadata(["error_kind": describe(kind)], includeTargetApp: true)
+        )
         invalidatePanelNotice()
         transition(to: .error(kind), reason: "error shown")
         ui.showError(message, action)
     }
 
     private func handleErrorAction(_ kind: ErrorKind) {
-        AppLog.debug("error action invoked for kind=\(describe(kind))", category: .ui)
+        AppLog.audit(
+            "error action invoked for kind=\(describe(kind))",
+            category: .ui,
+            metadata: workflowMetadata(["error_kind": describe(kind)], includeTargetApp: true)
+        )
         switch kind {
         case .retryable:
             retryTranscription()
@@ -331,17 +386,24 @@ final class DictationWorkflowCoordinator {
         case .invalidKey, .restrictedAccount:
             ui.dismissPanel()
             transition(to: .idle, reason: "open settings from error action")
+            completeWorkflowIfNeeded(outcome: "error_action_open_settings", reason: "open settings from error action")
             showSettings()
         case .micDenied:
             openMicrophoneSettings()
             ui.dismissPanel()
             transition(to: .idle, reason: "open mic settings from error action")
+            completeWorkflowIfNeeded(outcome: "error_action_open_mic_settings", reason: "open mic settings from error action")
         case .other:
             break
         }
     }
 
     private func resetToIdle(reason: String, reactivateTarget: Bool = true) {
+        AppLog.audit(
+            "resetting to idle reason=\(reason) reactivate_target=\(reactivateTarget)",
+            category: .app,
+            metadata: workflowMetadata(includeTargetApp: true)
+        )
         recorder.cleanup()
         lastAudioFileURL = nil
         currentTranscriptionRequest = nil
@@ -352,6 +414,7 @@ final class DictationWorkflowCoordinator {
         if reactivateTarget {
             focusTracker.reactivate(dictationTargetApp)
         }
+        completeWorkflowIfNeeded(outcome: "reset_to_idle", reason: reason)
     }
 
     private func pasteText(_ text: String) {
@@ -360,15 +423,17 @@ final class DictationWorkflowCoordinator {
         AppLog.metric(
             "paste_path",
             category: .app,
+            level: .audit,
             values: [
                 "chars": String(text.count),
                 "clipboard_write_succeeded": String(clipboardWriteSucceeded),
                 "phase": "clipboard_write"
-            ]
+            ].merging(workflowMetadata(includeTargetApp: true) ?? [:], uniquingKeysWith: { current, _ in current })
         )
 
         switch Self.initialPasteDisposition(clipboardWriteSucceeded: clipboardWriteSucceeded) {
         case .clipboardWriteFailed:
+            completeWorkflowIfNeeded(outcome: "clipboard_write_failed", reason: "clipboard write failed")
             AppLog.error("failed to write transcription to clipboard", category: .app)
             showTransientPanelNotice(AppStrings.Panel.clipboardWriteFailed)
         case .autoPaste:
@@ -389,6 +454,7 @@ final class DictationWorkflowCoordinator {
 
     private func invalidatePanelNotice() {
         panelNoticeToken = UUID()
+        panelNoticeWorkflowOutcome = nil
     }
 
     private func invalidatePendingPaste() {
@@ -409,18 +475,34 @@ final class DictationWorkflowCoordinator {
     private func showTransientPanelNotice(
         _ message: String,
         duration: TimeInterval = AppConstants.Timing.noticeDuration,
-        reactivateTargetOnDismiss: Bool = false
+        reactivateTargetOnDismiss: Bool = false,
+        workflowOutcome: String? = nil
     ) {
         invalidatePanelNotice()
         let token = panelNoticeToken
+        panelNoticeWorkflowOutcome = workflowOutcome
 
         transition(to: .notice, reason: "panel notice shown")
+        AppLog.audit(
+            "panel notice shown reactivate_target=\(reactivateTargetOnDismiss)",
+            category: .ui,
+            metadata: workflowMetadata(includeTargetApp: true)
+        )
         ui.showNotice(message)
 
         dispatchAfter(duration) { [weak self] in
             guard let self, self.panelNoticeToken == token else { return }
             guard case .notice = self.state else { return }
+            if let outcome = self.panelNoticeWorkflowOutcome {
+                self.completeWorkflowIfNeeded(outcome: outcome, reason: "notice auto-dismissed")
+            }
+            AppLog.audit(
+                "panel notice auto-dismissed reactivate_target=\(reactivateTargetOnDismiss)",
+                category: .ui,
+                metadata: self.workflowMetadata(includeTargetApp: true)
+            )
             self.transition(to: .idle, reason: "panel notice dismissed")
+            self.invalidatePanelNotice()
             self.ui.dismissPanel()
             if reactivateTargetOnDismiss {
                 self.focusTracker.reactivate(self.dictationTargetApp)
@@ -431,7 +513,11 @@ final class DictationWorkflowCoordinator {
     private func transition(to newState: DictationState, reason: String) {
         let oldState = state
         state = newState
-        AppLog.debug("state \(describe(oldState)) -> \(describe(newState)) (\(reason))", category: .app)
+        AppLog.audit(
+            "state \(describe(oldState)) -> \(describe(newState)) reason=\(reason)",
+            category: .app,
+            metadata: workflowMetadata(includeTargetApp: true)
+        )
     }
 
     private func describe(_ state: DictationState) -> String {
@@ -470,11 +556,12 @@ final class DictationWorkflowCoordinator {
         AppLog.metric(
             "paste_path",
             category: .app,
+            level: .audit,
             values: [
                 "auto_paste_eligible": String(canAutoPasteNow),
                 "phase": "execution",
                 "post_event_access_granted": String(postEventAccessGranted)
-            ]
+            ].merging(workflowMetadata(includeTargetApp: true) ?? [:], uniquingKeysWith: { current, _ in current })
         )
 
         switch Self.executionPasteDisposition(
@@ -482,15 +569,25 @@ final class DictationWorkflowCoordinator {
             postEventAccessGranted: postEventAccessGranted
         ) {
         case .autoPaste:
+            AppLog.audit("auto-paste execution proceeding", category: .app, metadata: workflowMetadata(includeTargetApp: true))
             transition(to: .idle, reason: "transcription pasted")
             simulatePaste()
+            completeWorkflowIfNeeded(outcome: "auto_paste", reason: "simulated paste posted")
         case .clipboardOnly:
             if canAutoPasteNow && !postEventAccessGranted {
                 AppLog.event("post-event access unavailable; keeping transcription in clipboard", category: .app)
                 handlePostEventPermissionDenied()
             } else {
-                AppLog.debug("focused element not pasteable at paste time; keeping transcription in clipboard", category: .focus)
-                showTransientPanelNotice(AppStrings.Panel.copiedToClipboard, reactivateTargetOnDismiss: true)
+                AppLog.audit(
+                    "focused element not pasteable at paste time; keeping transcription in clipboard",
+                    category: .focus,
+                    metadata: workflowMetadata(includeTargetApp: true)
+                )
+                showTransientPanelNotice(
+                    AppStrings.Panel.copiedToClipboard,
+                    reactivateTargetOnDismiss: true,
+                    workflowOutcome: "clipboard_only"
+                )
             }
         case .clipboardWriteFailed:
             showTransientPanelNotice(AppStrings.Panel.clipboardWriteFailed)
@@ -505,18 +602,33 @@ final class DictationWorkflowCoordinator {
             guard !hasRequestedPostEventAccess else { return false }
 
             hasRequestedPostEventAccess = true
-            AppLog.event("post-event access not granted, prompting user", category: .app)
+            AppLog.event(
+                "post-event access not granted, prompting user",
+                category: .app,
+                metadata: workflowMetadata(includeTargetApp: true)
+            )
             let status = permissionService.requestPostEventAccess()
+            AppLog.audit(
+                "post-event access request completed status=\(describe(status))",
+                category: .app,
+                metadata: workflowMetadata(["post_event_status": describe(status)], includeTargetApp: true)
+            )
             return status == .granted || status == .unavailable
         }
     }
 
     private func handlePostEventPermissionDenied() {
+        AppLog.audit(
+            "post-event access denied; clipboard-only notice shown",
+            category: .app,
+            metadata: workflowMetadata(includeTargetApp: true)
+        )
         shownPermissionGuidanceActions.insert(.postEventDenied)
         let handling = Self.postEventDeniedHandling(openedSystemSettings: false)
         showTransientPanelNotice(
             handling.noticeMessage,
-            reactivateTargetOnDismiss: handling.shouldReactivateTargetOnDismiss
+            reactivateTargetOnDismiss: handling.shouldReactivateTargetOnDismiss,
+            workflowOutcome: "post_event_denied_clipboard_only"
         )
     }
 
@@ -536,10 +648,61 @@ final class DictationWorkflowCoordinator {
         let vKey: CGKeyCode = 0x09
         let keyDown = CGEvent(keyboardEventSource: eventSource, virtualKey: vKey, keyDown: true)
         let keyUp = CGEvent(keyboardEventSource: eventSource, virtualKey: vKey, keyDown: false)
+        AppLog.audit(
+            "simulated paste posting key_events_created=\((keyDown != nil && keyUp != nil) ? "true" : "false")",
+            category: .app,
+            metadata: workflowMetadata(includeTargetApp: true)
+        )
         keyDown?.flags = .maskCommand
         keyUp?.flags = .maskCommand
         keyDown?.post(tap: .cgAnnotatedSessionEventTap)
         keyUp?.post(tap: .cgAnnotatedSessionEventTap)
+    }
+
+    private func beginWorkflow(triggerSource: String) {
+        currentWorkflowID = UUID().uuidString
+        AppLog.audit(
+            "workflow started trigger=\(triggerSource)",
+            category: .app,
+            metadata: workflowMetadata(["input_source": triggerSource], includeTargetApp: true)
+        )
+    }
+
+    private func completeWorkflowIfNeeded(outcome: String, reason: String) {
+        guard currentWorkflowID != nil else { return }
+        AppLog.audit(
+            "workflow finished outcome=\(outcome) reason=\(reason)",
+            category: .app,
+            metadata: workflowMetadata(["workflow_outcome": outcome], includeTargetApp: true)
+        )
+        currentWorkflowID = nil
+    }
+
+    private func workflowMetadata(
+        _ metadata: [String: String] = [:],
+        includeTargetApp: Bool = false
+    ) -> [String: String]? {
+        var values = metadata
+
+        if let currentWorkflowID {
+            values["workflow_id"] = currentWorkflowID
+        }
+
+        if includeTargetApp, let app = dictationTargetApp {
+            values["target_app_name"] = app.localizedName ?? "unknown"
+            values["target_app_bundle_id"] = app.bundleIdentifier ?? "unknown.bundle"
+            values["target_app_pid"] = String(app.processIdentifier)
+        }
+
+        return values.isEmpty ? nil : values
+    }
+
+    private func describe(_ status: PermissionService.EventAccessStatus) -> String {
+        switch status {
+        case .granted: return "granted"
+        case .denied: return "denied"
+        case .unavailable: return "unavailable"
+        }
     }
 
     static func shouldPresentPostEventDeniedGuidance(

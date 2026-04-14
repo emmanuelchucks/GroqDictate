@@ -3,11 +3,12 @@ import Cocoa
 final class PasteTargetInspector {
     func canAutoPaste(into targetApp: NSRunningApplication?) -> Bool {
         guard let targetApp, !targetApp.isTerminated else {
+            AppLog.audit("auto-paste target rejected reason=missing_or_terminated_app", category: .focus)
             return false
         }
 
         guard AXIsProcessTrusted() else {
-            AppLog.debug("accessibility not trusted; skipping auto paste", category: .focus)
+            AppLog.audit("auto-paste target rejected reason=accessibility_not_trusted", category: .focus)
             return false
         }
 
@@ -15,11 +16,11 @@ final class PasteTargetInspector {
         var focusedValue: CFTypeRef?
         let status = AXUIElementCopyAttributeValue(systemWide, kAXFocusedUIElementAttribute as CFString, &focusedValue)
         guard status == .success, let focusedValue else {
-            AppLog.debug("focused element unavailable (status=\(status.rawValue))", category: .focus)
+            AppLog.audit("auto-paste target rejected reason=focused_element_unavailable status=\(status.rawValue)", category: .focus)
             return false
         }
         guard CFGetTypeID(focusedValue) == AXUIElementGetTypeID() else {
-            AppLog.debug("focused element returned unexpected type", category: .focus)
+            AppLog.audit("auto-paste target rejected reason=focused_element_unexpected_type", category: .focus)
             return false
         }
 
@@ -28,28 +29,31 @@ final class PasteTargetInspector {
         AXUIElementGetPid(focusedElement, &pid)
 
         guard pid == targetApp.processIdentifier else {
-            AppLog.debug(
-                "focused element pid mismatch expected=\(targetApp.processIdentifier) actual=\(pid)",
+            AppLog.audit(
+                "auto-paste target rejected reason=focused_element_pid_mismatch expected=\(targetApp.processIdentifier) actual=\(pid)",
                 category: .focus
             )
             return false
         }
 
         if isAttributeSettable(focusedElement, attribute: kAXValueAttribute as CFString) {
+            AppLog.audit("auto-paste target accepted mode=settable_value role=\(stringAttribute(focusedElement, attribute: kAXRoleAttribute as CFString) ?? "n/a")", category: .focus)
             return true
         }
 
         let role = stringAttribute(focusedElement, attribute: kAXRoleAttribute as CFString)
         if role == kAXTextFieldRole as String || role == kAXTextAreaRole as String || role == kAXComboBoxRole as String {
+            AppLog.audit("auto-paste target accepted mode=text_role role=\(role ?? "n/a")", category: .focus)
             return true
         }
 
         if role == "AXWebArea",
            isAttributeSettable(focusedElement, attribute: kAXSelectedTextRangeAttribute as CFString) {
+            AppLog.audit("auto-paste target accepted mode=web_area_selected_text_range role=\(role ?? "n/a")", category: .focus)
             return true
         }
 
-        AppLog.debug("focused element role not editable role=\(role ?? "n/a")", category: .focus)
+        AppLog.audit("auto-paste target rejected reason=role_not_editable role=\(role ?? "n/a")", category: .focus)
         return false
     }
 
