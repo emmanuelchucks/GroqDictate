@@ -24,13 +24,13 @@ jobs:
           fi
           xcodegen --version
 
-      - name: Run CI
-        run: make ci
+      - name: Run validation
+        run: make validate
 
       - name: Upload xcresult
         if: always()
         uses: actions/upload-artifact@v4
         with:
           name: GroqDictate-xcresult
-          path: .build/TestResults/GroqDictate.xcresult
+          path: .build/ValidateResults/GroqDictate.xcresult
           if-no-files-found: ignore
