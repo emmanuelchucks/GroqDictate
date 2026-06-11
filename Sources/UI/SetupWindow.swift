@@ -13,11 +13,13 @@ final class SetupWindow: NSWindow, NSWindowDelegate {
     private let gainSlider = NSSlider()
     private let gainLabel = NSTextField(labelWithString: "2.0x")
     private let statusLabel = NSTextField(labelWithString: "")
+    private var doneButton: NSButton?
 
     var onSave: (() -> Void)?
     var onClose: ((Bool) -> Void)?
 
     private var didSave = false
+    private var isSaving = false
 
     init(configurationController: SetupConfigurationController = SetupConfigurationController()) {
         self.configurationController = configurationController
@@ -92,6 +94,7 @@ final class SetupWindow: NSWindow, NSWindowDelegate {
         doneButton.keyEquivalent = "\r"
         doneButton.setContentHuggingPriority(.required, for: .horizontal)
         doneButton.widthAnchor.constraint(equalToConstant: 104).isActive = true
+        self.doneButton = doneButton
 
         let gainRow = NSStackView(views: [gainSlider, gainLabel])
         gainRow.orientation = .horizontal
@@ -174,22 +177,48 @@ final class SetupWindow: NSWindow, NSWindowDelegate {
             inputGain: Float(gainSlider.doubleValue)
         )
 
-        switch configurationController.save(request) {
-        case .success:
-            didSave = true
-            close()
-        case .failure(.emptyAPIKey):
-            showStatus(AppStrings.Setup.keyEmpty, isError: true)
-        case .failure(.invalidAPIKey):
-            showStatus(AppStrings.Setup.keyInvalid, isError: true)
-        case .failure(.keychainFailure(let message)):
-            showStatus(AppStrings.Setup.keychainError(message), isError: true)
+        isSaving = true
+        doneButton?.isEnabled = false
+        showStatus(AppStrings.Setup.validating, isError: false)
+
+        configurationController.save(request) { [weak self] result in
+            DispatchQueue.main.async {
+                guard let self else { return }
+                self.isSaving = false
+                self.doneButton?.isEnabled = true
+
+                switch result {
+                case .success:
+                    self.didSave = true
+                    self.close()
+                case .failure(.emptyAPIKey):
+                    self.showStatus(AppStrings.Setup.keyEmpty, isError: true)
+                case .failure(.invalidAPIKey):
+                    self.showStatus(AppStrings.Setup.keyInvalid, isError: true)
+                case .failure(.keychainFailure(let message)):
+                    self.showStatus(AppStrings.Setup.keychainError(message), isError: true)
+                case .failure(.remoteInvalidKey):
+                    self.showStatus(AppStrings.Setup.keyRejected, isError: true)
+                case .failure(.remoteAccountRestricted):
+                    self.showStatus(AppStrings.Setup.accountRestricted, isError: true)
+                case .failure(.remoteModelUnavailable):
+                    self.showStatus(AppStrings.Setup.modelUnavailable, isError: true)
+                case .failure(.remoteValidationFailed(let message)):
+                    self.showStatus(AppStrings.Setup.validationFailed(message), isError: true)
+                }
+            }
         }
     }
 
     private func showStatus(_ text: String, isError: Bool) {
         statusLabel.stringValue = text
         statusLabel.textColor = isError ? .systemRed : .secondaryLabelColor
+    }
+
+    func windowShouldClose(_ sender: NSWindow) -> Bool {
+        guard isSaving else { return true }
+        showStatus(AppStrings.Setup.validating, isError: false)
+        return false
     }
 
     func windowWillClose(_ notification: Notification) {

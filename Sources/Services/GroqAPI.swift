@@ -1,7 +1,7 @@
 import Foundation
 
 enum GroqAPI {
-    private struct PreparedUpload {
+    struct PreparedUpload {
         let request: URLRequest
         let uploadFileURL: URL
         let audioFileBytes: Int
@@ -13,6 +13,7 @@ enum GroqAPI {
         private var task: URLSessionTask?
         private var cancelled = false
         private var uploadFileURL: URL?
+        private var pendingRetryWork: DispatchWorkItem?
 
         func setTask(_ task: URLSessionTask) {
             lock.lock()
@@ -40,16 +41,40 @@ enum GroqAPI {
             }
         }
 
+        func scheduleRetry(after delay: TimeInterval, _ retry: @escaping () -> Void) {
+            let work = DispatchWorkItem { retry() }
+
+            lock.lock()
+            if cancelled {
+                lock.unlock()
+                return
+            }
+            pendingRetryWork?.cancel()
+            pendingRetryWork = work
+            lock.unlock()
+
+            DispatchQueue.global(qos: .utility).asyncAfter(deadline: .now() + delay, execute: work)
+        }
+
+        func clearPendingRetry(_ work: DispatchWorkItem? = nil) {
+            lock.lock()
+            if work == nil || pendingRetryWork === work {
+                pendingRetryWork = nil
+            }
+            lock.unlock()
+        }
+
         func cancel() {
             lock.lock()
             cancelled = true
             let task = self.task
-            let uploadFileURL = task == nil ? self.uploadFileURL : nil
-            if task == nil {
-                self.uploadFileURL = nil
-            }
+            let pendingRetryWork = self.pendingRetryWork
+            self.pendingRetryWork = nil
+            let uploadFileURL = self.uploadFileURL
+            self.uploadFileURL = nil
             lock.unlock()
 
+            pendingRetryWork?.cancel()
             task?.cancel()
             if let uploadFileURL {
                 try? FileManager.default.removeItem(at: uploadFileURL)
@@ -79,6 +104,7 @@ enum GroqAPI {
     private static let requestTimeout: TimeInterval = 12
     private static let resourceTimeout: TimeInterval = 30
     private static let latencyLogThresholdMs: Double = 2500
+    private static let maxTranscriptionAttempts = 3
     private static let uploadChunkSize = 64 * 1024
     private static let transcriptionSessionProfile = "fresh_ephemeral"
 
@@ -183,7 +209,7 @@ enum GroqAPI {
         return requestHandle
     }
 
-    private static func buildRequest(fileURL: URL, config: Config) throws -> PreparedUpload {
+    static func buildRequest(fileURL: URL, config: Config) throws -> PreparedUpload {
         var request = URLRequest(url: baseURL)
         request.httpMethod = "POST"
         request.timeoutInterval = requestTimeout
@@ -214,7 +240,6 @@ enum GroqAPI {
         }
 
         try field("model", config.model)
-        try field("language", config.language)
         try field("response_format", "verbose_json")
         try field("temperature", "0")
 
@@ -305,31 +330,31 @@ enum GroqAPI {
             if let error {
                 let nsError = error as NSError
                 let isRetryableTransport = shouldRetryTransportError(nsError)
+                let retryDelay: TimeInterval? = isRetryableTransport && attempt < maxTranscriptionAttempts ? 0 : nil
                 logTransportError(
                     nsError,
                     attempt: attempt,
                     elapsedMs: totalMs,
                     audioFileBytes: audioFileBytes,
                     uploadFileBytes: uploadFileBytes,
-                    willRetry: attempt == 1 && isRetryableTransport
+                    willRetry: retryDelay != nil
                 )
 
-                if attempt == 1 && isRetryableTransport {
+                if let retryDelay {
                     shouldCleanupUpload = false
-                    guard !requestHandle.isCancelled else {
-                        requestHandle.finish()
-                        return
-                    }
-                    send(
+                    scheduleRetry(
                         request,
                         uploadFileURL: uploadFileURL,
                         audioFileBytes: audioFileBytes,
                         uploadFileBytes: uploadFileBytes,
                         requestHandle: requestHandle,
-                        attempt: 2,
+                        attempt: attempt,
+                        nextAttempt: attempt + 1,
+                        delay: retryDelay,
                         startedAt: startedAt,
                         readMs: readMs,
                         buildMs: buildMs,
+                        reason: "transport_\(transportErrorName(for: nsError))",
                         completion: completion
                     )
                     return
@@ -347,8 +372,30 @@ enum GroqAPI {
             }
 
             let payload = data ?? Data()
+            logRateLimitHeaders(http, attempt: attempt, statusCode: http.statusCode, requestID: requestID)
 
             guard http.statusCode == 200 else {
+                if let retryDelay = httpRetryDelay(status: http.statusCode, headers: http, body: payload, attempt: attempt) {
+                    log("http-retry status=\(http.statusCode) delay_ms=\(String(format: "%.0f", retryDelay * 1000))")
+                    shouldCleanupUpload = false
+                    scheduleRetry(
+                        request,
+                        uploadFileURL: uploadFileURL,
+                        audioFileBytes: audioFileBytes,
+                        uploadFileBytes: uploadFileBytes,
+                        requestHandle: requestHandle,
+                        attempt: attempt,
+                        nextAttempt: attempt + 1,
+                        delay: retryDelay,
+                        startedAt: startedAt,
+                        readMs: readMs,
+                        buildMs: buildMs,
+                        reason: "http_\(http.statusCode)",
+                        completion: completion
+                    )
+                    return
+                }
+
                 log("http-error")
                 completion(.failure(mapHTTPError(status: http.statusCode, headers: http, body: payload)))
                 return
@@ -367,6 +414,121 @@ enum GroqAPI {
 
         requestHandle.setTask(task)
         task.resume()
+    }
+
+    private static func scheduleRetry(
+        _ request: URLRequest,
+        uploadFileURL: URL,
+        audioFileBytes: Int,
+        uploadFileBytes: Int,
+        requestHandle: TranscriptionRequest,
+        attempt: Int,
+        nextAttempt: Int,
+        delay: TimeInterval,
+        startedAt: CFAbsoluteTime,
+        readMs: Double,
+        buildMs: Double,
+        reason: String,
+        completion: @escaping (Result<String, TranscriptionError>) -> Void
+    ) {
+        AppLog.metric(
+            "transcription_retry_scheduled",
+            category: .network,
+            level: .debug,
+            values: [
+                "attempt": String(attempt),
+                "delay_ms": String(format: "%.0f", delay * 1000),
+                "next_attempt": String(nextAttempt),
+                "reason": reason,
+                "session_profile": transcriptionSessionProfile
+            ]
+        )
+
+        requestHandle.scheduleRetry(after: delay) {
+            requestHandle.clearPendingRetry()
+            guard !requestHandle.isCancelled else {
+                requestHandle.finish()
+                return
+            }
+            send(
+                request,
+                uploadFileURL: uploadFileURL,
+                audioFileBytes: audioFileBytes,
+                uploadFileBytes: uploadFileBytes,
+                requestHandle: requestHandle,
+                attempt: nextAttempt,
+                startedAt: startedAt,
+                readMs: readMs,
+                buildMs: buildMs,
+                completion: completion
+            )
+        }
+    }
+
+    static func httpRetryDelay(status: Int, headers: HTTPURLResponse, body: Data, attempt: Int) -> TimeInterval? {
+        guard attempt < maxTranscriptionAttempts else { return nil }
+
+        switch status {
+        case 429:
+            return parseRetryAfter(headers.value(forHTTPHeaderField: "Retry-After")) ?? 10
+        case 498:
+            return jitteredBackoff(base: 0.7, attempt: attempt)
+        case 500, 502, 503, 504:
+            return jitteredBackoff(base: 0.5, attempt: attempt)
+        case 424:
+            let message = (parseAPIErrorMessage(from: body) ?? "").lowercased()
+            guard message.contains("tempor") || message.contains("dependency") || message.contains("try again") else {
+                return nil
+            }
+            return jitteredBackoff(base: 0.5, attempt: attempt)
+        default:
+            return nil
+        }
+    }
+
+    static func parseRetryAfter(_ rawValue: String?) -> TimeInterval? {
+        guard let rawValue else { return nil }
+        let trimmed = rawValue.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard let value = TimeInterval(trimmed), value >= 0 else { return nil }
+        return value
+    }
+
+    private static func jitteredBackoff(base: TimeInterval, attempt: Int) -> TimeInterval {
+        let multiplier = pow(2, Double(max(0, attempt - 1)))
+        let jitter = Double.random(in: 0...0.25)
+        return min(5, base * multiplier + jitter)
+    }
+
+    private static func logRateLimitHeaders(
+        _ headers: HTTPURLResponse,
+        attempt: Int,
+        statusCode: Int,
+        requestID: String
+    ) {
+        let headerNames = [
+            "retry-after",
+            "x-ratelimit-limit-requests",
+            "x-ratelimit-remaining-requests",
+            "x-ratelimit-reset-requests",
+            "x-ratelimit-limit-audio-seconds",
+            "x-ratelimit-remaining-audio-seconds",
+            "x-ratelimit-reset-audio-seconds"
+        ]
+
+        var values: [String: String] = [
+            "attempt": String(attempt),
+            "request_id": requestID,
+            "status": String(statusCode)
+        ]
+
+        for name in headerNames {
+            if let value = headers.value(forHTTPHeaderField: name), !value.isEmpty {
+                values[name.replacingOccurrences(of: "-", with: "_")] = value
+            }
+        }
+
+        guard values.count > 3 else { return }
+        AppLog.metric("groq_rate_limit_headers", category: .network, level: .debug, values: values)
     }
 
     private static func elapsedMs(since start: CFAbsoluteTime) -> Double {
@@ -516,11 +678,13 @@ enum GroqAPI {
         case 424:
             return .failedDependency(message ?? "Temporary dependency error")
         case 429:
-            let retryAfter = headers.value(forHTTPHeaderField: "Retry-After").flatMap(Int.init) ?? 10
+            let retryAfter = headers.value(forHTTPHeaderField: "Retry-After")
+                .flatMap(parseRetryAfter)
+                .map { Int(ceil($0)) } ?? 10
             return .rateLimited(retryAfter)
         case 498:
             return .capacityExceeded
-        case 500, 502, 503:
+        case 500, 502, 503, 504:
             return .serverError
         default:
             if let message, !message.isEmpty {

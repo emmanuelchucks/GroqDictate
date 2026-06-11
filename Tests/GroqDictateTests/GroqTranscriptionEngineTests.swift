@@ -38,6 +38,24 @@ final class GroqTranscriptionEngineTests: XCTestCase {
         XCTAssertEqual(unknown.diagnosticCode, "other")
     }
 
+    func testGroqTranscriptionRequest_cancelRemovesPreparedUploadEvenWithActiveTask() throws {
+        let directory = FileManager.default.temporaryDirectory
+            .appendingPathComponent("groq-request-cancel-test-\(UUID().uuidString)", isDirectory: true)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        let uploadURL = directory.appendingPathComponent("upload.multipart")
+        try Data("upload".utf8).write(to: uploadURL)
+        defer { try? FileManager.default.removeItem(at: directory) }
+
+        let request = GroqAPI.TranscriptionRequest()
+        request.setUploadFileURL(uploadURL)
+        request.setTask(URLSession.shared.dataTask(with: URL(string: "https://example.com")!))
+
+        request.cancel()
+
+        XCTAssertFalse(FileManager.default.fileExists(atPath: uploadURL.path))
+        XCTAssertTrue(request.isCancelled)
+    }
+
     func testTranscriptionRequestHandle_cancelCancelsUnderlyingGroqRequest() {
         var underlyingRequest: GroqAPI.TranscriptionRequest?
         let engine = GroqTranscriptionEngine { _, _, _ in
@@ -66,7 +84,6 @@ final class GroqTranscriptionEngineTests: XCTestCase {
         Config(
             apiKey: "gsk_test",
             model: Config.DefaultValue.model,
-            language: Config.DefaultValue.language,
             inputGain: Config.DefaultValue.inputGain,
             micUID: nil
         )

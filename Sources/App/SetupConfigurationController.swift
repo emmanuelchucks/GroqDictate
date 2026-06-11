@@ -25,9 +25,15 @@ enum SetupSaveError: Error, Equatable {
     case emptyAPIKey
     case invalidAPIKey
     case keychainFailure(String)
+    case remoteInvalidKey
+    case remoteAccountRestricted
+    case remoteModelUnavailable
+    case remoteValidationFailed(String)
 }
 
 final class SetupConfigurationController {
+    typealias RemoteValidation = (String, String, @escaping (GroqModelValidationResult) -> Void) -> Void
+
     private let loadAPIKey: () -> String?
     private let loadSelectedModelID: () -> String?
     private let loadSelectedMicrophoneID: () -> String?
@@ -35,6 +41,7 @@ final class SetupConfigurationController {
     private let loadInputDevices: () -> [AudioDevice]
     private let saveAPIKey: (String) throws -> Void
     private let savePreferences: (String, String?, Float) -> Void
+    private let validateRemotely: RemoteValidation
 
     convenience init() {
         self.init(
@@ -52,7 +59,8 @@ final class SetupConfigurationController {
             },
             loadInputDevices: AudioRecorder.availableInputDevices,
             saveAPIKey: Config.saveAPIKey,
-            savePreferences: Config.savePreferences
+            savePreferences: Config.savePreferences,
+            validateRemotely: GroqModelValidator.validate
         )
     }
 
@@ -63,7 +71,8 @@ final class SetupConfigurationController {
         loadInputGain: @escaping () -> Float,
         loadInputDevices: @escaping () -> [AudioDevice],
         saveAPIKey: @escaping (String) throws -> Void,
-        savePreferences: @escaping (String, String?, Float) -> Void
+        savePreferences: @escaping (String, String?, Float) -> Void,
+        validateRemotely: @escaping RemoteValidation = { _, _, completion in completion(.networkUnavailable) }
     ) {
         self.loadAPIKey = loadAPIKey
         self.loadSelectedModelID = loadSelectedModelID
@@ -72,11 +81,12 @@ final class SetupConfigurationController {
         self.loadInputDevices = loadInputDevices
         self.saveAPIKey = saveAPIKey
         self.savePreferences = savePreferences
+        self.validateRemotely = validateRemotely
     }
 
     func makeState() -> SetupConfigurationState {
         let modelOptions = Config.modelOptions
-        let selectedModelID = resolvedSelectedModelID(from: loadSelectedModelID(), options: modelOptions)
+        let selectedModelID = Config.resolvedModelID(loadSelectedModelID())
         let microphoneOptions = filteredMicrophoneOptions(from: loadInputDevices())
         let selectedMicrophoneID = resolvedSelectedMicrophoneID(
             from: loadSelectedMicrophoneID(),
@@ -95,44 +105,79 @@ final class SetupConfigurationController {
         )
     }
 
-    func save(_ request: SetupSaveRequest) -> Result<Void, SetupSaveError> {
+    func save(_ request: SetupSaveRequest, completion: @escaping (Result<Void, SetupSaveError>) -> Void) {
         let key = request.apiKey.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !key.isEmpty else {
-            return .failure(.emptyAPIKey)
+            AppLog.metric("setup_validation", category: .app, level: .event, values: ["result": "empty_key", "stage": "local"])
+            completion(.failure(.emptyAPIKey))
+            return
         }
         guard key.hasPrefix("gsk_") else {
-            return .failure(.invalidAPIKey)
-        }
-
-        do {
-            try saveAPIKey(key)
-        } catch {
-            return .failure(.keychainFailure(error.localizedDescription))
+            AppLog.metric("setup_validation", category: .app, level: .event, values: ["result": "invalid_prefix", "stage": "local"])
+            completion(.failure(.invalidAPIKey))
+            return
         }
 
         let state = makeState()
-        let selectedModelID = resolvedSelectedModelID(from: request.selectedModelID, options: state.modelOptions)
+        let selectedModelID = Config.resolvedModelID(request.selectedModelID)
         let selectedMicrophoneID = resolvedSelectedMicrophoneID(
             from: request.selectedMicrophoneID,
             options: state.microphoneOptions
         )
 
-        savePreferences(selectedModelID, selectedMicrophoneID, request.inputGain)
-        return .success(())
+        validateRemotely(key, selectedModelID) { [saveAPIKey, savePreferences] validationResult in
+            AppLog.metric(
+                "setup_validation",
+                category: .app,
+                level: .event,
+                values: [
+                    "model": selectedModelID,
+                    "result": Self.describe(validationResult),
+                    "stage": "remote"
+                ]
+            )
+
+            switch validationResult {
+            case .valid, .networkUnavailable, .serviceUnavailable:
+                do {
+                    try saveAPIKey(key)
+                    savePreferences(selectedModelID, selectedMicrophoneID, request.inputGain)
+                    AppLog.metric(
+                        "setup_save",
+                        category: .app,
+                        level: .event,
+                        values: [
+                            "model": selectedModelID,
+                            "remote_validation": Self.describe(validationResult),
+                            "result": "saved"
+                        ]
+                    )
+                    completion(.success(()))
+                } catch {
+                    completion(.failure(.keychainFailure(error.localizedDescription)))
+                }
+            case .invalidKey:
+                completion(.failure(.remoteInvalidKey))
+            case .accountRestricted:
+                completion(.failure(.remoteAccountRestricted))
+            case .modelUnavailable:
+                completion(.failure(.remoteModelUnavailable))
+            case .other(let message):
+                completion(.failure(.remoteValidationFailed(message)))
+            }
+        }
     }
 
-    private func resolvedSelectedModelID(
-        from storedValue: String?,
-        options: [Config.ModelOption]
-    ) -> String {
-        guard
-            let storedValue,
-            options.contains(where: { $0.id == storedValue })
-        else {
-            return Config.DefaultValue.model
+    private static func describe(_ result: GroqModelValidationResult) -> String {
+        switch result {
+        case .valid: return "valid"
+        case .invalidKey: return "invalid_key"
+        case .accountRestricted: return "account_restricted"
+        case .modelUnavailable: return "model_unavailable"
+        case .networkUnavailable: return "network_unavailable_allowed"
+        case .serviceUnavailable: return "service_unavailable_allowed"
+        case .other: return "other"
         }
-
-        return storedValue
     }
 
     private func filteredMicrophoneOptions(from devices: [AudioDevice]) -> [SetupConfigurationState.MicrophoneOption] {

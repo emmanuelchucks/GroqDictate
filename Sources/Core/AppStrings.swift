@@ -59,7 +59,12 @@ enum AppStrings {
 
         static let keyEmpty = "API key cannot be empty."
         static let keyInvalid = "Invalid key — should start with gsk_"
+        static let validating = "Checking Groq…"
+        static let keyRejected = "Invalid Groq key"
+        static let accountRestricted = "Account restricted"
+        static let modelUnavailable = "Model unavailable"
         static func keychainError(_ message: String) -> String { "Keychain error: \(message)" }
+        static func validationFailed(_ message: String) -> String { "Groq check failed" }
     }
 
     enum Permissions {

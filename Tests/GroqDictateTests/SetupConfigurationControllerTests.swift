@@ -2,10 +2,16 @@ import XCTest
 @testable import GroqDictate
 
 final class SetupConfigurationControllerTests: XCTestCase {
+    func testModelOptionsUseTurboDefaultAndExcludeRemovedDistilModel() {
+        XCTAssertEqual(Config.DefaultValue.model, "whisper-large-v3-turbo")
+        XCTAssertEqual(Config.modelOptions.map(\.id), ["whisper-large-v3-turbo", "whisper-large-v3"])
+        XCTAssertEqual(Config.resolvedModelID("distil-whisper-large-v3-en"), Config.DefaultValue.model)
+    }
+
     func testMakeState_filtersAggregateDevicesAndRestoresSavedSelections() {
         let controller = makeController(
             loadAPIKey: { "gsk_existing" },
-            loadSelectedModelID: { "whisper-large-v3-turbo" },
+            loadSelectedModelID: { "whisper-large-v3" },
             loadSelectedMicrophoneID: { "usb-mic" },
             loadInputGain: { 4.2 },
             loadInputDevices: {
@@ -23,7 +29,7 @@ final class SetupConfigurationControllerTests: XCTestCase {
             state,
             SetupConfigurationState(
                 existingAPIKey: "gsk_existing",
-                selectedModelID: "whisper-large-v3-turbo",
+                selectedModelID: "whisper-large-v3",
                 modelOptions: Config.modelOptions,
                 microphoneOptions: [
                     .init(id: "built-in", title: "MacBook Microphone"),
@@ -37,7 +43,7 @@ final class SetupConfigurationControllerTests: XCTestCase {
 
     func testMakeState_fallsBackWhenSavedSelectionsAreNoLongerAvailable() {
         let controller = makeController(
-            loadSelectedModelID: { "missing-model" },
+            loadSelectedModelID: { "distil-whisper-large-v3-en" },
             loadSelectedMicrophoneID: { "missing-mic" },
             loadInputGain: { 0 },
             loadInputDevices: {
@@ -65,26 +71,13 @@ final class SetupConfigurationControllerTests: XCTestCase {
             }
         )
 
-        let emptyKeyResult = controller.save(
-            .init(apiKey: "   ", selectedModelID: Config.DefaultValue.model, selectedMicrophoneID: nil, inputGain: 5)
-        )
-        if case .failure(.emptyAPIKey) = emptyKeyResult {
-        } else {
-            XCTFail("Expected empty API key validation failure")
-        }
-
-        let invalidKeyResult = controller.save(
-            .init(apiKey: "abc123", selectedModelID: Config.DefaultValue.model, selectedMicrophoneID: nil, inputGain: 5)
-        )
-        if case .failure(.invalidAPIKey) = invalidKeyResult {
-        } else {
-            XCTFail("Expected invalid API key validation failure")
-        }
+        assertSave(controller, request: .init(apiKey: "   ", selectedModelID: Config.DefaultValue.model, selectedMicrophoneID: nil, inputGain: 5), equals: .failure(.emptyAPIKey))
+        assertSave(controller, request: .init(apiKey: "abc123", selectedModelID: Config.DefaultValue.model, selectedMicrophoneID: nil, inputGain: 5), equals: .failure(.invalidAPIKey))
         XCTAssertTrue(savedAPIKeys.isEmpty)
         XCTAssertTrue(savedPreferences.isEmpty)
     }
 
-    func testSave_persistsTrimmedKeyAndCanonicalPreferences() {
+    func testSave_persistsAfterSuccessfulRemoteValidation() {
         var savedAPIKey: String?
         var savedModel: String?
         var savedMicrophone: String?
@@ -101,26 +94,100 @@ final class SetupConfigurationControllerTests: XCTestCase {
                 savedModel = model
                 savedMicrophone = mic
                 savedGain = gain
-            }
+            },
+            validateRemotely: { _, _, completion in completion(.valid) }
         )
 
-        let result = controller.save(
-            .init(
+        assertSave(
+            controller,
+            request: .init(
                 apiKey: "  gsk_live_key  ",
-                selectedModelID: "missing-model",
+                selectedModelID: "whisper-large-v3",
                 selectedMicrophoneID: "missing-mic",
                 inputGain: 3.5
-            )
+            ),
+            equals: .success(())
         )
 
-        if case .success = result {
-        } else {
-            XCTFail("Expected successful save result")
-        }
         XCTAssertEqual(savedAPIKey, "gsk_live_key")
-        XCTAssertEqual(savedModel, Config.DefaultValue.model)
+        XCTAssertEqual(savedModel, "whisper-large-v3")
         XCTAssertNil(savedMicrophone)
         XCTAssertEqual(savedGain, 3.5)
+    }
+
+    func testSave_allowsLocallyValidKeyWhenRemoteValidationIsUnavailable() {
+        var savedAPIKey: String?
+        let controller = makeController(
+            saveAPIKey: { savedAPIKey = $0 },
+            validateRemotely: { _, _, completion in completion(.networkUnavailable) }
+        )
+
+        assertSave(
+            controller,
+            request: .init(apiKey: "gsk_offline", selectedModelID: Config.DefaultValue.model, selectedMicrophoneID: nil, inputGain: 2),
+            equals: .success(())
+        )
+        XCTAssertEqual(savedAPIKey, "gsk_offline")
+    }
+
+    func testSave_blocksDefinitiveRemoteValidationFailures() {
+        let cases: [(GroqModelValidationResult, SetupSaveError)] = [
+            (.invalidKey, .remoteInvalidKey),
+            (.accountRestricted, .remoteAccountRestricted),
+            (.modelUnavailable, .remoteModelUnavailable),
+            (.other("bad response"), .remoteValidationFailed("bad response"))
+        ]
+
+        for (validationResult, expectedError) in cases {
+            var didPersist = false
+            let controller = makeController(
+                saveAPIKey: { _ in didPersist = true },
+                savePreferences: { _, _, _ in didPersist = true },
+                validateRemotely: { _, _, completion in completion(validationResult) }
+            )
+
+            assertSave(
+                controller,
+                request: .init(apiKey: "gsk_test", selectedModelID: Config.DefaultValue.model, selectedMicrophoneID: nil, inputGain: 2),
+                equals: .failure(expectedError)
+            )
+            XCTAssertFalse(didPersist)
+        }
+    }
+
+    private func assertSave(
+        _ controller: SetupConfigurationController,
+        request: SetupSaveRequest,
+        equals expected: Result<Void, SetupSaveError>,
+        file: StaticString = #filePath,
+        line: UInt = #line
+    ) {
+        let expectation = expectation(description: "save completes")
+        var received: Result<Void, SetupSaveError>?
+
+        controller.save(request) { result in
+            received = result
+            expectation.fulfill()
+        }
+
+        wait(for: [expectation], timeout: 1)
+        assertResult(received, expected, file: file, line: line)
+    }
+
+    private func assertResult(
+        _ received: Result<Void, SetupSaveError>?,
+        _ expected: Result<Void, SetupSaveError>,
+        file: StaticString,
+        line: UInt
+    ) {
+        switch (received, expected) {
+        case (.success, .success):
+            break
+        case (.failure(let receivedError), .failure(let expectedError)):
+            XCTAssertEqual(receivedError, expectedError, file: file, line: line)
+        default:
+            XCTFail("Expected \(expected), received \(String(describing: received))", file: file, line: line)
+        }
     }
 
     private func makeController(
@@ -130,7 +197,8 @@ final class SetupConfigurationControllerTests: XCTestCase {
         loadInputGain: @escaping () -> Float = { 0 },
         loadInputDevices: @escaping () -> [AudioDevice] = { [] },
         saveAPIKey: @escaping (String) throws -> Void = { _ in },
-        savePreferences: @escaping (String, String?, Float) -> Void = { _, _, _ in }
+        savePreferences: @escaping (String, String?, Float) -> Void = { _, _, _ in },
+        validateRemotely: @escaping SetupConfigurationController.RemoteValidation = { _, _, completion in completion(.networkUnavailable) }
     ) -> SetupConfigurationController {
         SetupConfigurationController(
             loadAPIKey: loadAPIKey,
@@ -139,7 +207,8 @@ final class SetupConfigurationControllerTests: XCTestCase {
             loadInputGain: loadInputGain,
             loadInputDevices: loadInputDevices,
             saveAPIKey: saveAPIKey,
-            savePreferences: savePreferences
+            savePreferences: savePreferences,
+            validateRemotely: validateRemotely
         )
     }
 }

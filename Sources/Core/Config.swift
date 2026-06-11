@@ -3,7 +3,6 @@ import Foundation
 struct Config {
     let apiKey: String
     let model: String
-    let language: String
     let inputGain: Float
     let micUID: String?
 
@@ -18,8 +17,7 @@ struct Config {
     }
 
     enum DefaultValue {
-        static let model = "whisper-large-v3"
-        static let language = "en"
+        static let model = "whisper-large-v3-turbo"
         static let inputGain: Float = 2.0
     }
 
@@ -29,9 +27,8 @@ struct Config {
     }
 
     static let modelOptions: [ModelOption] = [
-        ModelOption(id: "whisper-large-v3", title: "Whisper Large V3 (most accurate)"),
         ModelOption(id: "whisper-large-v3-turbo", title: "Whisper Large V3 Turbo"),
-        ModelOption(id: "distil-whisper-large-v3-en", title: "Distil Whisper V3")
+        ModelOption(id: "whisper-large-v3", title: "Whisper Large V3 (most accurate)")
     ]
 
     static func load() -> Config? {
@@ -45,11 +42,20 @@ struct Config {
 
         return Config(
             apiKey: apiKey,
-            model: defaults.string(forKey: DefaultsKey.model) ?? DefaultValue.model,
-            language: DefaultValue.language,
+            model: resolvedModelID(defaults.string(forKey: DefaultsKey.model)),
             inputGain: gain > 0 ? gain : DefaultValue.inputGain,
             micUID: (mic?.isEmpty ?? true) ? nil : mic
         )
+    }
+
+    static func resolvedModelID(_ storedValue: String?) -> String {
+        guard
+            let storedValue,
+            modelOptions.contains(where: { $0.id == storedValue })
+        else {
+            return DefaultValue.model
+        }
+        return storedValue
     }
 
     static func saveAPIKey(_ key: String) throws {

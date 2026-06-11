@@ -3,6 +3,44 @@ import XCTest
 @testable import GroqDictate
 
 final class GroqAPIHTTPErrorMappingTests: XCTestCase {
+    func testBuildRequest_usesAutoLanguageDetectionAndCurrentDefaultModel() throws {
+        let wavURL = try makeWAVFile()
+        defer { try? FileManager.default.removeItem(at: wavURL.deletingLastPathComponent()) }
+
+        let upload = try GroqAPI.buildRequest(
+            fileURL: wavURL,
+            config: Config(
+                apiKey: "gsk_test",
+                model: Config.DefaultValue.model,
+                inputGain: Config.DefaultValue.inputGain,
+                micUID: nil
+            )
+        )
+        defer { try? FileManager.default.removeItem(at: upload.uploadFileURL) }
+
+        let body = try String(contentsOf: upload.uploadFileURL, encoding: .utf8)
+        XCTAssertTrue(body.contains("name=\"model\"\r\n\r\nwhisper-large-v3-turbo"))
+        XCTAssertTrue(body.contains("name=\"response_format\"\r\n\r\nverbose_json"))
+        XCTAssertTrue(body.contains("name=\"temperature\"\r\n\r\n0"))
+        XCTAssertTrue(body.contains("name=\"file\"; filename=\"audio.wav\""))
+        XCTAssertFalse(body.contains("name=\"language\""))
+    }
+
+    func testHTTPRetryDelay_respectsRetryAfterAndRetryableStatusBoundaries() {
+        guard let retryAfterDelay = GroqAPI.httpRetryDelay(
+            status: 429,
+            headers: makeResponse(status: 429, headers: ["Retry-After": "1.5"]),
+            body: Data(),
+            attempt: 1
+        ) else {
+            return XCTFail("Expected retry delay for 429")
+        }
+        XCTAssertEqual(retryAfterDelay, 1.5, accuracy: 0.001)
+        XCTAssertNotNil(GroqAPI.httpRetryDelay(status: 503, headers: makeResponse(status: 503), body: Data(), attempt: 1))
+        XCTAssertNil(GroqAPI.httpRetryDelay(status: 400, headers: makeResponse(status: 400), body: Data(), attempt: 1))
+        XCTAssertNil(GroqAPI.httpRetryDelay(status: 503, headers: makeResponse(status: 503), body: Data(), attempt: 3))
+    }
+
     func testMapHTTPError_knownStatusMappings() {
         XCTAssertTrue(matches(GroqAPI.mapHTTPError(status: 401, headers: makeResponse(status: 401), body: Data()), .invalidKey))
         XCTAssertTrue(matches(GroqAPI.mapHTTPError(status: 404, headers: makeResponse(status: 404), body: Data()), .notFound))
@@ -118,6 +156,15 @@ final class GroqAPIHTTPErrorMappingTests: XCTestCase {
         let unknown = GroqAPI.TranscriptionError.other("HTTP 418")
         XCTAssertEqual(unknown.errorDescription, AppStrings.Errors.unexpectedTranscriptionError)
         XCTAssertEqual(unknown.diagnosticSummary, "HTTP 418")
+    }
+
+    private func makeWAVFile() throws -> URL {
+        let directory = FileManager.default.temporaryDirectory
+            .appendingPathComponent("groq-api-request-test-\(UUID().uuidString)", isDirectory: true)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        let url = directory.appendingPathComponent("audio.wav")
+        try Data("RIFF\0\0\0\0WAVEfmt data".utf8).write(to: url)
+        return url
     }
 
     private func makeResponse(status: Int, headers: [String: String] = [:]) -> HTTPURLResponse {
