@@ -32,14 +32,14 @@ final class AppDelegateLogicTests: XCTestCase {
         XCTAssertFalse(AppDelegate.shouldHandleTranscriptionCallback(for: .error(.retryable)))
     }
 
-    func testPasteDisposition_coversAutoPasteAndClipboardOnlyPaths() {
+    func testPasteDisposition_autoPastesAfterClipboardWrite() {
         XCTAssertEqual(
             AppDelegate.pasteDisposition(clipboardWriteSucceeded: true, canAutoPaste: true),
             .autoPaste
         )
         XCTAssertEqual(
             AppDelegate.pasteDisposition(clipboardWriteSucceeded: true, canAutoPaste: false),
-            .clipboardOnly
+            .autoPaste
         )
         XCTAssertEqual(
             AppDelegate.pasteDisposition(clipboardWriteSucceeded: false, canAutoPaste: true),
@@ -58,17 +58,13 @@ final class AppDelegateLogicTests: XCTestCase {
         )
     }
 
-    func testExecutionPasteDisposition_usesExecutionTimeEligibility() {
+    func testExecutionPasteDisposition_dependsOnlyOnPostEventAccess() {
         XCTAssertEqual(
-            AppDelegate.executionPasteDisposition(canAutoPasteNow: true, postEventAccessGranted: true),
+            AppDelegate.executionPasteDisposition(postEventAccessGranted: true),
             .autoPaste
         )
         XCTAssertEqual(
-            AppDelegate.executionPasteDisposition(canAutoPasteNow: false, postEventAccessGranted: true),
-            .clipboardOnly
-        )
-        XCTAssertEqual(
-            AppDelegate.executionPasteDisposition(canAutoPasteNow: true, postEventAccessGranted: false),
+            AppDelegate.executionPasteDisposition(postEventAccessGranted: false),
             .clipboardOnly
         )
     }

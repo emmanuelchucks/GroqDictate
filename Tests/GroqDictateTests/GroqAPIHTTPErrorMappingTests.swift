@@ -3,7 +3,7 @@ import XCTest
 @testable import GroqDictate
 
 final class GroqAPIHTTPErrorMappingTests: XCTestCase {
-    func testBuildRequest_usesAutoLanguageDetectionAndCurrentDefaultModel() throws {
+    func testBuildRequest_usesEnglishLanguageAndCurrentDefaultModel() throws {
         let wavURL = try makeWAVFile()
         defer { try? FileManager.default.removeItem(at: wavURL.deletingLastPathComponent()) }
 
@@ -19,11 +19,11 @@ final class GroqAPIHTTPErrorMappingTests: XCTestCase {
         defer { try? FileManager.default.removeItem(at: upload.uploadFileURL) }
 
         let body = try String(contentsOf: upload.uploadFileURL, encoding: .utf8)
-        XCTAssertTrue(body.contains("name=\"model\"\r\n\r\nwhisper-large-v3-turbo"))
+        XCTAssertTrue(body.contains("name=\"model\"\r\n\r\nwhisper-large-v3"))
+        XCTAssertTrue(body.contains("name=\"language\"\r\n\r\nen"))
         XCTAssertTrue(body.contains("name=\"response_format\"\r\n\r\nverbose_json"))
         XCTAssertTrue(body.contains("name=\"temperature\"\r\n\r\n0"))
         XCTAssertTrue(body.contains("name=\"file\"; filename=\"audio.wav\""))
-        XCTAssertFalse(body.contains("name=\"language\""))
     }
 
     func testHTTPRetryDelay_respectsRetryAfterAndRetryableStatusBoundaries() {

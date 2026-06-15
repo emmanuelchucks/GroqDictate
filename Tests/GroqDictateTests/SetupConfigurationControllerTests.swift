@@ -2,9 +2,9 @@ import XCTest
 @testable import GroqDictate
 
 final class SetupConfigurationControllerTests: XCTestCase {
-    func testModelOptionsUseTurboDefaultAndExcludeRemovedDistilModel() {
-        XCTAssertEqual(Config.DefaultValue.model, "whisper-large-v3-turbo")
-        XCTAssertEqual(Config.modelOptions.map(\.id), ["whisper-large-v3-turbo", "whisper-large-v3"])
+    func testModelOptionsUseAccurateDefaultAndExcludeRemovedDistilModel() {
+        XCTAssertEqual(Config.DefaultValue.model, "whisper-large-v3")
+        XCTAssertEqual(Config.modelOptions.map(\.id), ["whisper-large-v3", "whisper-large-v3-turbo"])
         XCTAssertEqual(Config.resolvedModelID("distil-whisper-large-v3-en"), Config.DefaultValue.model)
     }
 

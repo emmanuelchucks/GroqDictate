@@ -60,9 +60,9 @@ Out of scope unless explicitly reprioritized:
 ## Groq STT product choices
 
 - Use Groq cloud STT as the primary transcription path.
-- Prefer `whisper-large-v3-turbo` as the default model for short dictation latency/cost.
-- Keep `whisper-large-v3` as the accuracy option.
+- Prefer `whisper-large-v3` as the default model because dictation quality matters more than the small latency/cost win.
+- Keep `whisper-large-v3-turbo` as the fast/cheap option.
 - Do not keep the Distil Whisper option in the normal app.
-- Omit the `language` request field so Groq auto-detects language.
+- Send `language = en` by default for better English dictation accuracy and latency.
 - Keep `temperature = 0`; Groq recommends the default `0` for transcription/translation, and predictable dictation is the desired behavior.
 - Do not expose prompt/vocabulary support unless it can be done as a simple visible setting with honest validation. Do not add hidden prompt settings.
