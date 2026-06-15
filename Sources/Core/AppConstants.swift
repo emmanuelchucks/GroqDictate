@@ -50,7 +50,7 @@ enum AppConstants {
     }
 
     enum Timing {
-        static let simulatedPasteDelay: TimeInterval = 0.05
+        static let simulatedPasteDelay: TimeInterval = 0.2
         static let noticeDuration: TimeInterval = 1.2
     }
 }

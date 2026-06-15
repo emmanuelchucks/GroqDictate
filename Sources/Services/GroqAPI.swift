@@ -240,6 +240,7 @@ enum GroqAPI {
         }
 
         try field("model", config.model)
+        try field("language", "en")
         try field("response_format", "verbose_json")
         try field("temperature", "0")
 

@@ -40,13 +40,13 @@ Successful transcription writes to the clipboard before any paste attempt. This 
 - clipboard history tools can capture it;
 - clipboard fallback is reliable when auto-paste is blocked.
 
-Current insertion is best-effort simulated Cmd+V after reactivating the target app and checking paste eligibility. If Accessibility/PostEvent/focus conditions prevent auto-paste, the transcript remains in clipboard and the user gets a notice.
+Current insertion is best-effort simulated Cmd+V after reactivating the target app. Do not require Accessibility to prove the focused element is editable before pasting; browser text fields often do not expose stable editable attributes even though normal Cmd+V works. If PostEvent permission prevents auto-paste, the transcript remains in clipboard and the user gets a notice.
 
 Future direct insertion through Accessibility must stay additive:
 
 1. write clipboard first;
-2. try direct insertion only where safe;
-3. fall back to Cmd+V;
+2. try Cmd+V as the normal cross-app path;
+3. use direct insertion only where it is clearly safer or more reliable;
 4. fall back to clipboard-only notice.
 
 Do not restore the previous clipboard by default.
@@ -69,8 +69,8 @@ Durable request choices:
 
 - `response_format = verbose_json` because segment metadata helps diagnostics and filtering.
 - `temperature = 0` because Groq recommends the default `0` for STT and deterministic dictation is desirable.
-- omit `language` so Groq auto-detects the spoken language.
-- prefer `whisper-large-v3-turbo` by default; keep `whisper-large-v3` for accuracy.
+- set `language = en` for the default English dictation path because Groq documents that providing the input language improves accuracy and latency.
+- prefer `whisper-large-v3` by default; keep `whisper-large-v3-turbo` as the fast/cheap option.
 
 Avoid hidden defaults/overrides for product behavior. If a future setting matters to users, it should be visible and understandable.
 

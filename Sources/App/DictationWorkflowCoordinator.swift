@@ -550,45 +550,27 @@ final class DictationWorkflowCoordinator {
     }
 
     private func executePendingPaste() {
-        let canAutoPasteNow = pasteTargetInspector.canAutoPaste(into: dictationTargetApp)
-        let postEventAccessGranted = canAutoPasteNow && ensurePostEventAccessForSimulatedPaste()
+        let postEventAccessGranted = ensurePostEventAccessForSimulatedPaste()
 
         AppLog.metric(
             "paste_path",
             category: .app,
             level: .audit,
             values: [
-                "auto_paste_eligible": String(canAutoPasteNow),
                 "phase": "execution",
                 "post_event_access_granted": String(postEventAccessGranted)
             ].merging(workflowMetadata(includeTargetApp: true) ?? [:], uniquingKeysWith: { current, _ in current })
         )
 
-        switch Self.executionPasteDisposition(
-            canAutoPasteNow: canAutoPasteNow,
-            postEventAccessGranted: postEventAccessGranted
-        ) {
+        switch Self.executionPasteDisposition(postEventAccessGranted: postEventAccessGranted) {
         case .autoPaste:
             AppLog.audit("auto-paste execution proceeding", category: .app, metadata: workflowMetadata(includeTargetApp: true))
             transition(to: .idle, reason: "transcription pasted")
             simulatePaste()
             completeWorkflowIfNeeded(outcome: "auto_paste", reason: "simulated paste posted")
         case .clipboardOnly:
-            if canAutoPasteNow && !postEventAccessGranted {
-                AppLog.event("post-event access unavailable; keeping transcription in clipboard", category: .app)
-                handlePostEventPermissionDenied()
-            } else {
-                AppLog.audit(
-                    "focused element not pasteable at paste time; keeping transcription in clipboard",
-                    category: .focus,
-                    metadata: workflowMetadata(includeTargetApp: true)
-                )
-                showTransientPanelNotice(
-                    AppStrings.Panel.copiedToClipboard,
-                    reactivateTargetOnDismiss: true,
-                    workflowOutcome: "clipboard_only"
-                )
-            }
+            AppLog.event("post-event access unavailable; keeping transcription in clipboard", category: .app)
+            handlePostEventPermissionDenied()
         case .clipboardWriteFailed:
             showTransientPanelNotice(AppStrings.Panel.clipboardWriteFailed)
         }
@@ -756,14 +738,13 @@ final class DictationWorkflowCoordinator {
         return .autoPaste
     }
 
-    static func executionPasteDisposition(canAutoPasteNow: Bool, postEventAccessGranted: Bool) -> PasteDisposition {
-        guard canAutoPasteNow, postEventAccessGranted else { return .clipboardOnly }
-        return .autoPaste
+    static func executionPasteDisposition(postEventAccessGranted: Bool) -> PasteDisposition {
+        postEventAccessGranted ? .autoPaste : .clipboardOnly
     }
 
     static func pasteDisposition(clipboardWriteSucceeded: Bool, canAutoPaste: Bool) -> PasteDisposition {
         guard clipboardWriteSucceeded else { return .clipboardWriteFailed }
-        return canAutoPaste ? .autoPaste : .clipboardOnly
+        return .autoPaste
     }
 
     static func postEventDeniedHandling(openedSystemSettings: Bool) -> PostEventDeniedHandling {

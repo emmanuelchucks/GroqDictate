@@ -304,11 +304,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         DictationWorkflowCoordinator.initialPasteDisposition(clipboardWriteSucceeded: clipboardWriteSucceeded)
     }
 
-    static func executionPasteDisposition(canAutoPasteNow: Bool, postEventAccessGranted: Bool) -> PasteDisposition {
-        DictationWorkflowCoordinator.executionPasteDisposition(
-            canAutoPasteNow: canAutoPasteNow,
-            postEventAccessGranted: postEventAccessGranted
-        )
+    static func executionPasteDisposition(postEventAccessGranted: Bool) -> PasteDisposition {
+        DictationWorkflowCoordinator.executionPasteDisposition(postEventAccessGranted: postEventAccessGranted)
     }
 
     static func pasteDisposition(clipboardWriteSucceeded: Bool, canAutoPaste: Bool) -> PasteDisposition {
