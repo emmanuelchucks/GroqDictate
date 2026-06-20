@@ -28,6 +28,8 @@ If auto-paste is unavailable or denied, the transcript remains in your clipboard
 - Right ⌘: start/stop dictation
 - Esc: cancel/dismiss
 
+Wireless Bluetooth microphones can take a moment to wake on macOS. If the panel waveform is flat at first, begin speaking when it starts moving. Wired/USB microphones generally avoid this wake-up delay.
+
 ## For Developers
 
 ### Requirements

@@ -100,6 +100,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     private func makeBootstrapCoordinator() -> AppBootstrapCoordinator {
         AppBootstrapCoordinator(
+            prepareAudioInput: { [weak self] in
+                self?.recorder.prepareInput()
+            },
             startHotkeys: { [weak self] in
                 self?.hotkeys.start() ?? .failed
             },
@@ -207,6 +210,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 },
                 showProcessing: { [weak self] in
                     self?.panel.waveformView.setProcessing()
+                },
+                showStartingMic: { [weak self] recorder in
+                    self?.panel.waveformView.setStartingMic(levelSource: recorder)
+                    self?.panel.show()
                 },
                 showRecording: { [weak self] recorder in
                     self?.panel.waveformView.setRecording(levelSource: recorder)

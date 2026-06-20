@@ -51,6 +51,24 @@ final class AppBootstrapCoordinatorTests: XCTestCase {
         XCTAssertEqual(listenEventPromptCount, 1)
     }
 
+    func testPrepareForRuntimeUse_warmsAudioBeforeStartingHotkeys() {
+        var events: [String] = []
+
+        let coordinator = makeCoordinator(
+            prepareAudioInput: {
+                events.append("audio")
+            },
+            startHotkeys: {
+                events.append("hotkeys")
+                return .ready
+            }
+        )
+
+        coordinator.prepareForRuntimeUse()
+
+        XCTAssertEqual(events, ["audio", "hotkeys"])
+    }
+
     func testPrepareForRuntimeUse_reactivatesAfterHotkeysStartWhenRequested() {
         var events: [String] = []
 
@@ -77,6 +95,7 @@ final class AppBootstrapCoordinatorTests: XCTestCase {
         preflightListenEventAccess: @escaping () -> PermissionService.EventAccessStatus = { .granted },
         requestListenEventAccess: @escaping () -> PermissionService.EventAccessStatus = { .granted },
         preflightPostEventAccess: @escaping () -> PermissionService.EventAccessStatus = { .granted },
+        prepareAudioInput: @escaping () -> Void = {},
         startHotkeys: @escaping () -> HotkeyMonitor.StartStatus = { .ready },
         reactivateApp: @escaping (NSRunningApplication?) -> Void = { _ in }
     ) -> AppBootstrapCoordinator {
@@ -88,6 +107,7 @@ final class AppBootstrapCoordinatorTests: XCTestCase {
             preflightListenEventAccess: preflightListenEventAccess,
             requestListenEventAccess: requestListenEventAccess,
             preflightPostEventAccess: preflightPostEventAccess,
+            prepareAudioInput: prepareAudioInput,
             startHotkeys: startHotkeys,
             reactivateApp: reactivateApp,
             dispatchToMain: { $0() }

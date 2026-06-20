@@ -8,12 +8,14 @@ final class AppBootstrapCoordinator {
     private let preflightListenEventAccess: () -> PermissionService.EventAccessStatus
     private let requestListenEventAccess: () -> PermissionService.EventAccessStatus
     private let preflightPostEventAccess: () -> PermissionService.EventAccessStatus
+    private let prepareAudioInput: () -> Void
     private let startHotkeys: () -> HotkeyMonitor.StartStatus
     private let reactivateApp: (NSRunningApplication?) -> Void
     private let dispatchToMain: (@escaping () -> Void) -> Void
 
     convenience init(
         permissionService: PermissionService = .shared,
+        prepareAudioInput: @escaping () -> Void = {},
         startHotkeys: @escaping () -> HotkeyMonitor.StartStatus,
         reactivateApp: @escaping (NSRunningApplication?) -> Void,
         dispatchToMain: @escaping (@escaping () -> Void) -> Void = { DispatchQueue.main.async(execute: $0) }
@@ -30,6 +32,7 @@ final class AppBootstrapCoordinator {
                 permissionService.requestListenEventAccess()
             },
             preflightPostEventAccess: permissionService.preflightPostEventAccess,
+            prepareAudioInput: prepareAudioInput,
             startHotkeys: startHotkeys,
             reactivateApp: reactivateApp,
             dispatchToMain: dispatchToMain
@@ -44,6 +47,7 @@ final class AppBootstrapCoordinator {
         preflightListenEventAccess: @escaping () -> PermissionService.EventAccessStatus,
         requestListenEventAccess: @escaping () -> PermissionService.EventAccessStatus,
         preflightPostEventAccess: @escaping () -> PermissionService.EventAccessStatus,
+        prepareAudioInput: @escaping () -> Void = {},
         startHotkeys: @escaping () -> HotkeyMonitor.StartStatus,
         reactivateApp: @escaping (NSRunningApplication?) -> Void,
         dispatchToMain: @escaping (@escaping () -> Void) -> Void = { DispatchQueue.main.async(execute: $0) }
@@ -55,6 +59,7 @@ final class AppBootstrapCoordinator {
         self.preflightListenEventAccess = preflightListenEventAccess
         self.requestListenEventAccess = requestListenEventAccess
         self.preflightPostEventAccess = preflightPostEventAccess
+        self.prepareAudioInput = prepareAudioInput
         self.startHotkeys = startHotkeys
         self.reactivateApp = reactivateApp
         self.dispatchToMain = dispatchToMain
@@ -95,6 +100,7 @@ final class AppBootstrapCoordinator {
         logPermissionSnapshot(phase: "bootstrap_pre_request")
         requestAccessibilityAndListenEventAccessIfNeeded()
         logPermissionSnapshot(phase: "bootstrap_post_request")
+        prepareAudioInput()
 
         let hotkeyStatus = startHotkeys()
         handleHotkeyMonitorStartStatus(hotkeyStatus)

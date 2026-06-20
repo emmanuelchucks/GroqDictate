@@ -54,6 +54,7 @@ final class WaveformView: NSView {
 
     private enum DisplayState {
         case idle
+        case startingMic
         case recording
         case processing
         case notice(String)
@@ -89,11 +90,27 @@ final class WaveformView: NSView {
         nil
     }
 
-    func setRecording(levelSource: AudioRecorder) {
+    func setStartingMic(levelSource: AudioRecorder) {
         self.levelSource = levelSource
-        displayState = .recording
+        displayState = .startingMic
         barHeights = Array(repeating: 0, count: barCount)
         barWriteHead = 0
+        startAnimating()
+    }
+
+    func setRecording(levelSource: AudioRecorder) {
+        self.levelSource = levelSource
+        let shouldResetBars: Bool
+        if case .startingMic = displayState {
+            shouldResetBars = false
+        } else {
+            shouldResetBars = true
+        }
+        displayState = .recording
+        if shouldResetBars {
+            barHeights = Array(repeating: 0, count: barCount)
+            barWriteHead = 0
+        }
         startAnimating()
     }
 
@@ -187,7 +204,7 @@ final class WaveformView: NSView {
         }
 
         switch displayState {
-        case .recording:
+        case .startingMic, .recording:
             barHeights[barWriteHead] = CGFloat(levelSource?.currentLevel ?? 0)
             barWriteHead = (barWriteHead + 1) % barCount
         case .processing:
@@ -222,7 +239,7 @@ final class WaveformView: NSView {
         switch displayState {
         case .idle:
             drawCenterLine(in: topRect, ctx: ctx)
-        case .recording:
+        case .startingMic, .recording:
             drawBars(in: topRect, ctx: ctx)
         case .processing:
             drawProcessing(in: topRect, ctx: ctx)
@@ -241,6 +258,8 @@ final class WaveformView: NSView {
         switch displayState {
         case .idle:
             break
+        case .startingMic:
+            drawHint(AppStrings.Panel.escCancel, in: bounds, y: y)
         case .recording:
             drawLabel(AppStrings.Panel.recording, color: .systemRed, at: NSPoint(x: 16, y: y))
             drawHint(AppStrings.Panel.escCancel, in: bounds, y: y)
@@ -352,6 +371,7 @@ final class WaveformView: NSView {
     private func describe(_ state: DisplayState) -> String {
         switch state {
         case .idle: return "idle"
+        case .startingMic: return "startingMic"
         case .recording: return "recording"
         case .processing: return "processing"
         case .notice: return "notice"

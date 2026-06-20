@@ -52,6 +52,7 @@ final class DictationWorkflowCoordinator {
         let showError: (String, WaveformView.ErrorAction) -> Void
         let showNotice: (String) -> Void
         let showProcessing: () -> Void
+        let showStartingMic: (AudioRecorder) -> Void
         let showRecording: (AudioRecorder) -> Void
     }
 
@@ -197,12 +198,21 @@ final class DictationWorkflowCoordinator {
         invalidatePanelNotice()
         applyConfig()
 
-        ui.showRecording(recorder)
+        let workflowID = currentWorkflowID
+        recorder.setRecordingReadyHandler { [weak self] in
+            DispatchQueue.main.async {
+                guard let self, self.state == .recording, self.currentWorkflowID == workflowID else { return }
+                AppLog.metric("recording_input_ready", category: .audio, level: .debug, values: [:])
+                self.ui.showRecording(self.recorder)
+            }
+        }
 
         do {
             try recorder.start()
             transition(to: .recording, reason: "recording started")
+            ui.showStartingMic(recorder)
         } catch {
+            recorder.setRecordingReadyHandler(nil)
             recorder.cleanup()
             completeWorkflowIfNeeded(outcome: "recording_start_failed", reason: "recorder start failed")
             AppLog.error("failed to start recording (\(error.localizedDescription))", category: .audio)
@@ -213,6 +223,7 @@ final class DictationWorkflowCoordinator {
     private func stopAndTranscribe() {
         guard case .recording = state else { return }
 
+        recorder.setRecordingReadyHandler(nil)
         transition(to: .processing, reason: "recording stopped, preparing transcription")
         ui.showProcessing()
 
@@ -312,6 +323,7 @@ final class DictationWorkflowCoordinator {
         )
         if case .recording = state {
             AppLog.audit("recording stop issued process_recording=false", category: .audio, metadata: workflowMetadata())
+            recorder.setRecordingReadyHandler(nil)
             recorder.stop(processRecording: false) { _ in }
         }
         if currentTranscriptionRequest != nil {
@@ -404,6 +416,7 @@ final class DictationWorkflowCoordinator {
             category: .app,
             metadata: workflowMetadata(includeTargetApp: true)
         )
+        recorder.setRecordingReadyHandler(nil)
         recorder.cleanup()
         lastAudioFileURL = nil
         currentTranscriptionRequest = nil

@@ -53,9 +53,13 @@ Do not restore the previous clipboard by default.
 
 ## Audio pipeline
 
-The app records 16 kHz mono 16-bit PCM WAV. After stop, it trims leading/trailing silence and may compress to FLAC when the file is large enough to justify the size/latency tradeoff.
+The app records 16 kHz mono 16-bit PCM WAV. After stop, it preserves the captured audio and may compress to FLAC when the file is large enough to justify the size/latency tradeoff.
 
-Interior pauses are preserved. Temp files should be cleaned on success, cancel, and non-retryable cleanup paths. Retryable transcription failures preserve the last audio file so the user can retry without re-recording.
+The input AudioQueue is briefly prepared during runtime bootstrap, then stopped while idle so macOS does not show a persistent microphone indicator. Recording start restarts the prepared queue and shows the waveform panel immediately with only the cancel hint. The UI adds the normal recording label when nonzero input is observed, making waveform movement the speak-now cue for wireless devices that wake slowly. A constant warm input stream was tested and was reliable, but intentionally rejected as the default because it keeps macOS's microphone indicator on while idle.
+
+Normal stop drains a small number of input buffers before finalizing the WAV, then stops idle input again. Cancel paths discard the active session promptly and stop idle input. Full input queue teardown is reserved for app shutdown or device reconfiguration.
+
+Captured leading/trailing speech and interior pauses are preserved because dictation reliability is more important than shaving small uploads. Do not use local speech-boundary trimming; it can clip quiet first/last words. Temp files should be cleaned on success, cancel, and non-retryable cleanup paths. Retryable transcription failures preserve the last audio file so the user can retry without re-recording.
 
 ## Groq transcription request decisions
 

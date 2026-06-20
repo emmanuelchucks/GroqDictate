@@ -3,22 +3,7 @@ import XCTest
 @testable import GroqDictate
 
 final class AudioPreprocessorTests: XCTestCase {
-    func testDetector_keepsWeakTrailingSpeechAfterStrongOnset() {
-        let detector = RMSAudioSpeechBoundaryDetector()
-        let samples = silentSamples(milliseconds: 200)
-            + speechSamples(milliseconds: 240)
-            + speechSamples(milliseconds: 120, amplitude: 140)
-            + silentSamples(milliseconds: 200)
-
-        let bounds = detector.detectSpeechBounds(
-            samples: samples,
-            sampleRate: RMSAudioSpeechBoundaryDetector.sampleRate
-        )
-
-        XCTAssertEqual(bounds?.count, 5_760)
-    }
-
-    func testProcessRecording_trimsLeadingAndTrailingSilence() throws {
+    func testProcessRecording_leavesSmallWAVUntouched() throws {
         let originalSamples = silentSamples(milliseconds: 300)
             + speechSamples(milliseconds: 500)
             + silentSamples(milliseconds: 300)
@@ -31,54 +16,22 @@ final class AudioPreprocessorTests: XCTestCase {
         )
 
         XCTAssertEqual(outputURL, wavURL)
-        XCTAssertEqual(readSamples(from: wavURL).count, 12_320)
+        XCTAssertEqual(readSamples(from: wavURL), originalSamples)
     }
 
-    func testProcessRecording_preservesWeakTrailingSpeechBeforeApplyingPadding() throws {
-        let originalSamples = silentSamples(milliseconds: 300)
-            + speechSamples(milliseconds: 240)
-            + speechSamples(milliseconds: 120, amplitude: 140)
-            + silentSamples(milliseconds: 300)
+    func testProcessRecording_preservesLeadingAndTrailingSpeech() throws {
+        let originalSamples = speechSamples(milliseconds: 120, amplitude: 900)
+            + silentSamples(milliseconds: 200)
+            + speechSamples(milliseconds: 120, amplitude: 900)
         let wavURL = try writeWAV(samples: originalSamples)
         let preprocessor = DefaultAudioPreprocessor(compressionThresholdBytes: .max)
 
-        let outputURL = preprocessor.processRecording(
+        _ = preprocessor.processRecording(
             wavURL: wavURL,
             compressedOutputURL: wavURL.deletingPathExtension().appendingPathExtension("flac")
         )
 
-        XCTAssertEqual(outputURL, wavURL)
-        XCTAssertEqual(readSamples(from: wavURL).count, 10_080)
-    }
-
-    func testProcessRecording_leavesSilenceOnlyRecordingUntouched() throws {
-        let originalSamples = silentSamples(milliseconds: 600)
-        let wavURL = try writeWAV(samples: originalSamples)
-        let preprocessor = DefaultAudioPreprocessor(compressionThresholdBytes: .max)
-
-        let outputURL = preprocessor.processRecording(
-            wavURL: wavURL,
-            compressedOutputURL: wavURL.deletingPathExtension().appendingPathExtension("flac")
-        )
-
-        XCTAssertEqual(outputURL, wavURL)
-        XCTAssertEqual(readSamples(from: wavURL).count, originalSamples.count)
-    }
-
-    func testProcessRecording_leavesShortSpeechBurstUntouchedWhenDetectorDoesNotTrigger() throws {
-        let originalSamples = silentSamples(milliseconds: 300)
-            + speechSamples(milliseconds: 60)
-            + silentSamples(milliseconds: 300)
-        let wavURL = try writeWAV(samples: originalSamples)
-        let preprocessor = DefaultAudioPreprocessor(compressionThresholdBytes: .max)
-
-        let outputURL = preprocessor.processRecording(
-            wavURL: wavURL,
-            compressedOutputURL: wavURL.deletingPathExtension().appendingPathExtension("flac")
-        )
-
-        XCTAssertEqual(outputURL, wavURL)
-        XCTAssertEqual(readSamples(from: wavURL).count, originalSamples.count)
+        XCTAssertEqual(readSamples(from: wavURL), originalSamples)
     }
 
     func testProcessRecording_returnsCompressedOutputWhenCompressionSucceeds() throws {
@@ -107,18 +60,12 @@ final class AudioPreprocessorTests: XCTestCase {
         XCTAssertFalse(FileManager.default.fileExists(atPath: wavURL.path))
     }
 
-    func testProcessRecording_skipsCompressionWhenTrimmedResultFallsBelowThreshold() throws {
-        let originalSamples = silentSamples(milliseconds: 300)
-            + speechSamples(milliseconds: 500)
-            + silentSamples(milliseconds: 300)
-        let wavURL = try writeWAV(samples: originalSamples)
+    func testProcessRecording_keepsWAVWhenCompressionFails() throws {
+        let wavURL = try writeWAV(samples: speechSamples(milliseconds: 400))
         let compressedOutputURL = wavURL.deletingPathExtension().appendingPathExtension("flac")
         let preprocessor = DefaultAudioPreprocessor(
-            compressionThresholdBytes: 30_000,
-            compressionHandler: { _, _ in
-                XCTFail("Compression should not run after trimming brings the clip below threshold")
-                return false
-            }
+            compressionThresholdBytes: 1,
+            compressionHandler: { _, _ in false }
         )
 
         let outputURL = preprocessor.processRecording(
@@ -129,7 +76,6 @@ final class AudioPreprocessorTests: XCTestCase {
         XCTAssertEqual(outputURL, wavURL)
         XCTAssertTrue(FileManager.default.fileExists(atPath: wavURL.path))
         XCTAssertFalse(FileManager.default.fileExists(atPath: compressedOutputURL.path))
-        XCTAssertEqual((try? FileManager.default.attributesOfItem(atPath: wavURL.path)[.size] as? Int) ?? 0, 24_684)
     }
 
     private func writeWAV(samples: [Int16]) throws -> URL {
@@ -181,7 +127,7 @@ final class AudioPreprocessorTests: XCTestCase {
     }
 
     private func sampleCount(milliseconds: Int) -> Int {
-        Int((Double(milliseconds) / 1000) * RMSAudioSpeechBoundaryDetector.sampleRate)
+        Int((Double(milliseconds) / 1000) * 16_000)
     }
 }
 

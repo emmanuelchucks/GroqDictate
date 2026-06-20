@@ -39,8 +39,11 @@ enum AppConstants {
 
     enum Diagnostics {
         static let debugDefaultsKey = "debug-logging-enabled"
+        static let preserveAudioDefaultsKey = "preserve-debug-audio-enabled"
         static let debugLoggingEnabled = ProcessInfo.processInfo.environment["GROQDICTATE_DEBUG"] == "1"
             || UserDefaults.standard.bool(forKey: debugDefaultsKey)
+        static let preserveAudioEnabled = debugLoggingEnabled
+            && UserDefaults.standard.bool(forKey: preserveAudioDefaultsKey)
 
         static let diagnosticsDirectory = FileManager.default.homeDirectoryForCurrentUser
             .appendingPathComponent("Library/Application Support/GroqDictate/Diagnostics", isDirectory: true)
