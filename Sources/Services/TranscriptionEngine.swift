@@ -46,6 +46,7 @@ enum TranscriptionEngineError: LocalizedError, Equatable {
     case unprocessable(String)
     case failedDependency(String)
     case capacityExceeded
+    case networkUnavailable
     case other(String)
 
     init(_ groqError: GroqAPI.TranscriptionError) {
@@ -76,6 +77,8 @@ enum TranscriptionEngineError: LocalizedError, Equatable {
             self = .failedDependency(message)
         case .capacityExceeded:
             self = .capacityExceeded
+        case .networkUnavailable:
+            self = .networkUnavailable
         case .other(let message):
             self = .other(message)
         }
@@ -96,6 +99,7 @@ enum TranscriptionEngineError: LocalizedError, Equatable {
         case .unprocessable: return "unprocessable"
         case .failedDependency: return "failed_dependency"
         case .capacityExceeded: return "capacity_exceeded"
+        case .networkUnavailable: return "network_unavailable"
         case .other: return "other"
         }
     }
@@ -115,6 +119,7 @@ enum TranscriptionEngineError: LocalizedError, Equatable {
         case .unprocessable: return AppStrings.Errors.couldntProcessAudio
         case .failedDependency: return AppStrings.Errors.temporaryServiceIssue
         case .capacityExceeded: return AppStrings.Errors.serviceAtCapacity
+        case .networkUnavailable: return AppStrings.Errors.networkUnavailable
         case .other: return AppStrings.Errors.unexpectedTranscriptionError
         }
     }

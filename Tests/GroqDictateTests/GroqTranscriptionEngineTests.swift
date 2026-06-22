@@ -32,6 +32,11 @@ final class GroqTranscriptionEngineTests: XCTestCase {
         XCTAssertEqual(badRequest.diagnosticSummary, "Provider validation details")
         XCTAssertEqual(badRequest.diagnosticCode, "bad_request")
 
+        let networkUnavailable = TranscriptionEngineError(.networkUnavailable)
+        XCTAssertEqual(networkUnavailable.errorDescription, AppStrings.Errors.networkUnavailable)
+        XCTAssertNil(networkUnavailable.diagnosticSummary)
+        XCTAssertEqual(networkUnavailable.diagnosticCode, "network_unavailable")
+
         let unknown = TranscriptionEngineError(.other("HTTP 418"))
         XCTAssertEqual(unknown.errorDescription, AppStrings.Errors.unexpectedTranscriptionError)
         XCTAssertEqual(unknown.diagnosticSummary, "HTTP 418")

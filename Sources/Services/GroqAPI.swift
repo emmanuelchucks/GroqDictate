@@ -144,6 +144,26 @@ enum GroqAPI {
         }
     }
 
+    static func transcriptionError(for nsError: NSError) -> TranscriptionError {
+        guard nsError.domain == NSURLErrorDomain else {
+            return .other("Network error")
+        }
+
+        switch URLError.Code(rawValue: nsError.code) {
+        case .timedOut:
+            return .timedOut
+        case .notConnectedToInternet,
+             .networkConnectionLost,
+             .cannotConnectToHost,
+             .cannotFindHost,
+             .dnsLookupFailed,
+             .secureConnectionFailed:
+            return .networkUnavailable
+        default:
+            return .other("Network error")
+        }
+    }
+
     static func transportErrorName(for nsError: NSError) -> String {
         switch URLError.Code(rawValue: nsError.code) {
         case .timedOut: return "timed_out"
@@ -362,7 +382,7 @@ enum GroqAPI {
                 }
 
                 log("error=\(transportErrorName(for: nsError))", statusCode: nil)
-                completion(.failure(nsError.code == NSURLErrorTimedOut ? .timedOut : .other("Network error")))
+                completion(.failure(transcriptionError(for: nsError)))
                 return
             }
 
@@ -739,6 +759,7 @@ enum GroqAPI {
         case unprocessable(String)
         case failedDependency(String)
         case capacityExceeded
+        case networkUnavailable
         case other(String)
 
         var diagnosticCode: String {
@@ -756,6 +777,7 @@ enum GroqAPI {
             case .unprocessable: return "unprocessable"
             case .failedDependency: return "failed_dependency"
             case .capacityExceeded: return "capacity_exceeded"
+            case .networkUnavailable: return "network_unavailable"
             case .other: return "other"
             }
         }
@@ -775,6 +797,7 @@ enum GroqAPI {
             case .unprocessable: return AppStrings.Errors.couldntProcessAudio
             case .failedDependency: return AppStrings.Errors.temporaryServiceIssue
             case .capacityExceeded: return AppStrings.Errors.serviceAtCapacity
+            case .networkUnavailable: return AppStrings.Errors.networkUnavailable
             case .other: return AppStrings.Errors.unexpectedTranscriptionError
             }
         }

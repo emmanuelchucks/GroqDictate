@@ -123,6 +123,16 @@ final class GroqAPIHTTPErrorMappingTests: XCTestCase {
         )
     }
 
+    func testTranscriptionErrorForTransport_mapsOfflineToManualRetryError() {
+        let offline = NSError(domain: NSURLErrorDomain, code: NSURLErrorNotConnectedToInternet, userInfo: nil)
+        let dns = NSError(domain: NSURLErrorDomain, code: NSURLErrorDNSLookupFailed, userInfo: nil)
+        let timedOut = NSError(domain: NSURLErrorDomain, code: NSURLErrorTimedOut, userInfo: nil)
+
+        XCTAssertTrue(matches(GroqAPI.transcriptionError(for: offline), .networkUnavailable))
+        XCTAssertTrue(matches(GroqAPI.transcriptionError(for: dns), .networkUnavailable))
+        XCTAssertTrue(matches(GroqAPI.transcriptionError(for: timedOut), .timedOut))
+    }
+
     func testTransportErrorName_returnsStableDiagnosticLabels() {
         XCTAssertEqual(
             GroqAPI.transportErrorName(
@@ -152,6 +162,11 @@ final class GroqAPIHTTPErrorMappingTests: XCTestCase {
         let badRequest = GroqAPI.TranscriptionError.badRequest("Provider validation details")
         XCTAssertEqual(badRequest.errorDescription, AppStrings.Errors.requestRejected)
         XCTAssertEqual(badRequest.diagnosticSummary, "Provider validation details")
+
+        let networkUnavailable = GroqAPI.TranscriptionError.networkUnavailable
+        XCTAssertEqual(networkUnavailable.errorDescription, AppStrings.Errors.networkUnavailable)
+        XCTAssertNil(networkUnavailable.diagnosticSummary)
+        XCTAssertEqual(networkUnavailable.diagnosticCode, "network_unavailable")
 
         let unknown = GroqAPI.TranscriptionError.other("HTTP 418")
         XCTAssertEqual(unknown.errorDescription, AppStrings.Errors.unexpectedTranscriptionError)
@@ -188,7 +203,9 @@ final class GroqAPIHTTPErrorMappingTests: XCTestCase {
              (.notFound, .notFound),
              (.tooLarge, .tooLarge),
              (.capacityExceeded, .capacityExceeded),
+             (.networkUnavailable, .networkUnavailable),
              (.serverError, .serverError),
+             (.timedOut, .timedOut),
              (.accountRestricted, .accountRestricted):
             return true
         default:

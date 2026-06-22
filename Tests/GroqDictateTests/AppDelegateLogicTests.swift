@@ -11,6 +11,22 @@ final class AppDelegateLogicTests: XCTestCase {
         XCTAssertEqual(AppDelegate.toggleAction(for: .error(.retryable)), .handleError(.retryable))
     }
 
+    func testErrorPresentation_networkUnavailableIsRetryableWithCompactCopy() {
+        let presentation = DictationWorkflowCoordinator.errorPresentation(for: .networkUnavailable)
+
+        XCTAssertEqual(presentation.kind, .retryable)
+        XCTAssertEqual(presentation.message, AppStrings.Errors.networkUnavailable)
+        XCTAssertEqual(presentation.action, .retry)
+    }
+
+    func testErrorPresentation_unexpectedErrorStaysDismissOnly() {
+        let presentation = DictationWorkflowCoordinator.errorPresentation(for: .other("Network error"))
+
+        XCTAssertEqual(presentation.kind, .other)
+        XCTAssertEqual(presentation.message, AppStrings.Errors.unexpectedTranscriptionError)
+        XCTAssertEqual(presentation.action, .dismissOnly)
+    }
+
     func testEscapeAction_matchesDismissAndCancelStates() {
         XCTAssertEqual(AppDelegate.escapeAction(for: .idle), .ignore)
         XCTAssertEqual(AppDelegate.escapeAction(for: .recording), .cancelActiveWork)

@@ -97,6 +97,7 @@ enum AppStrings {
         static let couldntProcessAudio = "Couldn't process audio"
         static let temporaryServiceIssue = "Temporary service issue"
         static let serviceAtCapacity = "Service at capacity"
+        static let networkUnavailable = "Check connection"
         static let groqUnavailable = "Groq unavailable"
         static let transcriptionTimedOut = "Timed out"
         static let noSpeechDetected = "No speech detected"

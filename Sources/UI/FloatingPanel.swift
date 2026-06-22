@@ -45,7 +45,7 @@ final class FloatingPanel: NSPanel {
 }
 
 final class WaveformView: NSView {
-    enum ErrorAction {
+    enum ErrorAction: Equatable {
         case retry
         case newRecording
         case settings

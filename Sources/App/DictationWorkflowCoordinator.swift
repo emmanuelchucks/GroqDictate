@@ -56,6 +56,12 @@ final class DictationWorkflowCoordinator {
         let showRecording: (AudioRecorder) -> Void
     }
 
+    struct ErrorPresentation: Equatable {
+        let kind: ErrorKind
+        let message: String
+        let action: WaveformView.ErrorAction
+    }
+
     private let recorder: AudioRecorder
     private let focusTracker: FocusTracker
     private let pasteTargetInspector: PasteTargetInspector
@@ -352,23 +358,7 @@ final class DictationWorkflowCoordinator {
     }
 
     private func showTranscriptionError(_ error: TranscriptionEngineError) {
-        let presentation: (kind: ErrorKind, message: String, action: WaveformView.ErrorAction)
-
-        switch error {
-        case .rateLimited, .serverError, .timedOut, .emptyTranscription, .failedDependency, .capacityExceeded:
-            presentation = (.retryable, error.errorDescription ?? AppStrings.Errors.tryAgain, .retry)
-        case .tooLarge:
-            presentation = (.tooLarge, error.errorDescription ?? AppStrings.Errors.recordingTooLarge, .newRecording)
-        case .invalidKey:
-            presentation = (.invalidKey, AppStrings.Errors.invalidKey, .settings)
-        case .accountRestricted:
-            presentation = (.restrictedAccount, AppStrings.Errors.orgRestricted, .settings)
-        case .forbidden, .badRequest, .unprocessable, .other:
-            presentation = (.other, error.errorDescription ?? AppStrings.Errors.unexpectedTranscriptionError, .dismissOnly)
-        case .notFound:
-            presentation = (.other, AppStrings.Errors.resourceNotFound, .dismissOnly)
-        }
-
+        let presentation = Self.errorPresentation(for: error)
         showError(kind: presentation.kind, message: presentation.message, action: presentation.action)
     }
 
@@ -704,6 +694,36 @@ final class DictationWorkflowCoordinator {
         shownActions: Set<PermissionService.GuidanceAction>
     ) -> Bool {
         !shownActions.contains(.postEventDenied)
+    }
+
+    static func errorPresentation(for error: TranscriptionEngineError) -> ErrorPresentation {
+        switch error {
+        case .rateLimited, .serverError, .timedOut, .emptyTranscription,
+             .failedDependency, .capacityExceeded, .networkUnavailable:
+            return ErrorPresentation(
+                kind: .retryable,
+                message: error.errorDescription ?? AppStrings.Errors.tryAgain,
+                action: .retry
+            )
+        case .tooLarge:
+            return ErrorPresentation(
+                kind: .tooLarge,
+                message: error.errorDescription ?? AppStrings.Errors.recordingTooLarge,
+                action: .newRecording
+            )
+        case .invalidKey:
+            return ErrorPresentation(kind: .invalidKey, message: AppStrings.Errors.invalidKey, action: .settings)
+        case .accountRestricted:
+            return ErrorPresentation(kind: .restrictedAccount, message: AppStrings.Errors.orgRestricted, action: .settings)
+        case .forbidden, .badRequest, .unprocessable, .other:
+            return ErrorPresentation(
+                kind: .other,
+                message: error.errorDescription ?? AppStrings.Errors.unexpectedTranscriptionError,
+                action: .dismissOnly
+            )
+        case .notFound:
+            return ErrorPresentation(kind: .other, message: AppStrings.Errors.resourceNotFound, action: .dismissOnly)
+        }
     }
 
     static func toggleAction(for state: DictationState) -> ToggleAction {

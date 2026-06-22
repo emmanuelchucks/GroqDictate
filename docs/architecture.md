@@ -89,7 +89,7 @@ Important classes:
 - transient network/service: timeout, connection loss, rate limit, capacity, server errors;
 - local system: microphone, permissions, clipboard, focus/paste automation.
 
-Automatic retries should be bounded and cancellation-safe. Respect `Retry-After` for rate limits. After final failure, preserve the manual retry path for retryable transcription errors.
+Automatic retries should be bounded and cancellation-safe. Respect `Retry-After` for rate limits. After final failure, preserve the manual retry path for retryable transcription errors. Offline/DNS/connectivity failures should use compact retryable copy (`Check connection`) rather than falling through to a generic unexpected error.
 
 ## Diagnostics philosophy
 
