@@ -26,6 +26,39 @@ final class GroqAPIHTTPErrorMappingTests: XCTestCase {
         XCTAssertTrue(body.contains("name=\"file\"; filename=\"audio.wav\""))
     }
 
+    func testExtractTranscription_prefersTopLevelTextOverSegmentHeuristics() {
+        let payload = Data("""
+        {
+          "text": "first words after a pause should stay",
+          "segments": [
+            {"start": 0.0, "end": 1.0, "text": " first words", "compression_ratio": 1.4},
+            {"start": 10.5, "end": 11.0, "text": " after a pause should stay", "compression_ratio": 0.1}
+          ]
+        }
+        """.utf8)
+
+        XCTAssertEqual(
+            GroqAPI.extractTranscription(from: payload),
+            "first words after a pause should stay"
+        )
+    }
+
+    func testExtractTranscription_keepsAllSegmentsWhenTopLevelTextIsMissing() {
+        let payload = Data("""
+        {
+          "segments": [
+            {"start": 0.0, "end": 1.0, "text": " first words", "compression_ratio": 1.4},
+            {"start": 10.5, "end": 11.0, "text": " after a pause should stay", "compression_ratio": 0.1}
+          ]
+        }
+        """.utf8)
+
+        XCTAssertEqual(
+            GroqAPI.extractTranscription(from: payload),
+            "first words after a pause should stay"
+        )
+    }
+
     func testHTTPRetryDelay_respectsRetryAfterAndRetryableStatusBoundaries() {
         guard let retryAfterDelay = GroqAPI.httpRetryDelay(
             status: 429,

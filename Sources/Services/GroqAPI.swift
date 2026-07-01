@@ -636,44 +636,62 @@ enum GroqAPI {
         )
     }
 
-    private static func extractTranscription(from data: Data) -> String? {
-        guard
-            let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
-            let segments = json["segments"] as? [[String: Any]]
-        else {
+    static func extractTranscription(from data: Data) -> String? {
+        guard let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else {
             return String(data: data, encoding: .utf8)?.trimmingCharacters(in: .whitespacesAndNewlines)
         }
 
-        var kept = 0
-        var dropped = 0
+        let topLevelText = trimmedText(json["text"] as? String)
+
+        guard let segments = json["segments"] as? [[String: Any]] else {
+            return topLevelText ?? String(data: data, encoding: .utf8)?.trimmingCharacters(in: .whitespacesAndNewlines)
+        }
+
+        logSegmentDiagnostics(segments)
+
+        if let topLevelText {
+            return topLevelText
+        }
+
+        let segmentText = segments.compactMap { segment in
+            segment["text"] as? String
+        }.joined().trimmingCharacters(in: .whitespacesAndNewlines)
+
+        return segmentText.isEmpty ? nil : segmentText
+    }
+
+    private static func trimmedText(_ text: String?) -> String? {
+        let trimmed = text?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        return trimmed.isEmpty ? nil : trimmed
+    }
+
+    private static func logSegmentDiagnostics(_ segments: [[String: Any]]) {
+        var suspect = 0
         var lastEnd: Double = 0
 
-        let text = segments.compactMap { segment -> String? in
+        for segment in segments {
             let start = segment["start"] as? Double ?? 0
-            let end = segment["end"] as? Double ?? 0
+            let end = segment["end"] as? Double ?? lastEnd
             let compressionRatio = segment["compression_ratio"] as? Double ?? 0
             let gap = start - lastEnd
 
             if gap > AppConstants.Transcription.maxSegmentGapSeconds && compressionRatio < AppConstants.Transcription.minCompressionRatio {
-                dropped += 1
-                return nil
+                suspect += 1
             }
 
             lastEnd = end
-            kept += 1
-            return segment["text"] as? String
-        }.joined().trimmingCharacters(in: .whitespacesAndNewlines)
+        }
 
         AppLog.metric(
             "transcription_segments",
             category: .network,
             level: .debug,
             values: [
-                "dropped": String(dropped),
-                "kept": String(kept)
+                "dropped": "0",
+                "kept": String(segments.count),
+                "suspect": String(suspect)
             ]
         )
-        return text.isEmpty ? nil : text
     }
 
     static func mapHTTPError(status: Int, headers: HTTPURLResponse, body: Data) -> TranscriptionError {

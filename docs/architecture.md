@@ -71,7 +71,7 @@ POST https://api.groq.com/openai/v1/audio/transcriptions
 
 Durable request choices:
 
-- `response_format = verbose_json` because segment metadata helps diagnostics and filtering.
+- `response_format = verbose_json` because segment metadata helps diagnostics without changing the returned transcript.
 - `temperature = 0` because Groq recommends the default `0` for STT and deterministic dictation is desirable.
 - set `language = en` for the default English dictation path because Groq documents that providing the input language improves accuracy and latency.
 - prefer `whisper-large-v3` by default; keep `whisper-large-v3-turbo` as the fast/cheap option.
