@@ -255,9 +255,12 @@ final class DictationWorkflowCoordinator {
 
     private func transcribe(fileURL: URL, config: Config) {
         AppLog.audit(
-            "transcription started model=\(config.model)",
+            "transcription started provider=groq model=\(config.model)",
             category: .network,
-            metadata: workflowMetadata(["model": config.model], includeTargetApp: true)
+            metadata: workflowMetadata(
+                ["model": config.model, "provider": "groq"],
+                includeTargetApp: true
+            )
         )
         currentTranscriptionRequest = transcriptionEngine.transcribe(fileURL: fileURL, config: config) { [weak self] result in
             DispatchQueue.main.async {
