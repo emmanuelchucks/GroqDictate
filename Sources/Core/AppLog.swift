@@ -156,6 +156,11 @@ enum DiagnosticsStore {
         )
         value = replacingMatches(
             in: value,
+            pattern: #"\bsk_[A-Za-z0-9_-]+"#,
+            template: "sk_[redacted]"
+        )
+        value = replacingMatches(
+            in: value,
             pattern: #"text=.*$"#,
             template: "text=<redacted>"
         )

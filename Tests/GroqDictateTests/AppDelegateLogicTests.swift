@@ -116,6 +116,7 @@ final class AppDelegateLogicTests: XCTestCase {
         let sanitized = DiagnosticsStore.sanitize(input)
 
         XCTAssertEqual(sanitized, "token=gsk_[redacted] text=<redacted>")
+        XCTAssertEqual(DiagnosticsStore.sanitize("token=sk_secretkey"), "token=sk_[redacted]")
     }
 
     func testDiagnosticsSanitizeMetadata_redactsSensitiveValuesButPreservesShape() {

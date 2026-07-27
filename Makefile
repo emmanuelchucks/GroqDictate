@@ -83,8 +83,8 @@ doctor:
 	xcodegen --version; \
 	xcrun --find notarytool >/dev/null; \
 	xcrun --find stapler >/dev/null; \
-	codesign --version; \
-	spctl --version || true
+	xcrun --find codesign >/dev/null; \
+	xcrun --find spctl >/dev/null
 
 generate:
 	@xcodegen generate

@@ -264,6 +264,11 @@ enum GroqAPI {
         try field("response_format", "verbose_json")
         try field("temperature", "0")
 
+        let vocabularyHints = Config.normalizedVocabularyHints(config.vocabularyHints)
+        if !vocabularyHints.isEmpty {
+            try field("prompt", "Preferred vocabulary and spellings: \(vocabularyHints).")
+        }
+
         try outputHandle.write(contentsOf: Data("--\(boundary)\r\n".utf8))
         try outputHandle.write(
             contentsOf: Data("Content-Disposition: form-data; name=\"file\"; filename=\"audio.\(ext)\"\r\n".utf8)

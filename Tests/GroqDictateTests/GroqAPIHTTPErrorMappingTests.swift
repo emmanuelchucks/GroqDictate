@@ -13,7 +13,8 @@ final class GroqAPIHTTPErrorMappingTests: XCTestCase {
                 apiKey: "gsk_test",
                 model: Config.DefaultValue.model,
                 inputGain: Config.DefaultValue.inputGain,
-                micUID: nil
+                micUID: nil,
+                vocabularyHints: ""
             )
         )
         defer { try? FileManager.default.removeItem(at: upload.uploadFileURL) }
@@ -24,6 +25,27 @@ final class GroqAPIHTTPErrorMappingTests: XCTestCase {
         XCTAssertTrue(body.contains("name=\"response_format\"\r\n\r\nverbose_json"))
         XCTAssertTrue(body.contains("name=\"temperature\"\r\n\r\n0"))
         XCTAssertTrue(body.contains("name=\"file\"; filename=\"audio.wav\""))
+        XCTAssertFalse(body.contains("name=\"prompt\""))
+    }
+
+    func testBuildRequest_sendsNormalizedHintsAsContextualPrompt() throws {
+        let wavURL = try makeWAVFile()
+        defer { try? FileManager.default.removeItem(at: wavURL.deletingLastPathComponent()) }
+
+        let upload = try GroqAPI.buildRequest(
+            fileURL: wavURL,
+            config: Config(
+                apiKey: "gsk_test",
+                model: Config.DefaultValue.model,
+                inputGain: 1,
+                micUID: nil,
+                vocabularyHints: " GroqDictate, Kasoa\nGROQDICTATE "
+            )
+        )
+        defer { try? FileManager.default.removeItem(at: upload.uploadFileURL) }
+
+        let body = try String(contentsOf: upload.uploadFileURL, encoding: .utf8)
+        XCTAssertTrue(body.contains("name=\"prompt\"\r\n\r\nPreferred vocabulary and spellings: GroqDictate, Kasoa."))
     }
 
     func testExtractTranscription_prefersTopLevelTextOverSegmentHeuristics() {

@@ -153,11 +153,22 @@ struct GroqTranscriptionEngine: TranscriptionEngine {
         Config,
         @escaping (Result<String, GroqAPI.TranscriptionError>) -> Void
     ) -> GroqAPI.TranscriptionRequest
+    typealias SelectCandidate = (
+        String,
+        String,
+        String,
+        @escaping (String?) -> Void
+    ) -> GroqCandidateSelector.Request
 
     private let performTranscription: PerformTranscription
+    private let selectCandidate: SelectCandidate
 
-    init(performTranscription: @escaping PerformTranscription = GroqAPI.transcribe) {
+    init(
+        performTranscription: @escaping PerformTranscription = GroqAPI.transcribe,
+        selectCandidate: @escaping SelectCandidate = GroqCandidateSelector.select
+    ) {
         self.performTranscription = performTranscription
+        self.selectCandidate = selectCandidate
     }
 
     @discardableResult
@@ -166,12 +177,131 @@ struct GroqTranscriptionEngine: TranscriptionEngine {
         config: Config,
         completion: @escaping (Result<String, TranscriptionEngineError>) -> Void
     ) -> TranscriptionRequestHandle {
-        let request = performTranscription(fileURL, config) { result in
-            completion(result.mapError(TranscriptionEngineError.init))
+        guard !config.vocabularyHints.isEmpty else {
+            let request = performTranscription(fileURL, config) { result in
+                completion(result.mapError(TranscriptionEngineError.init))
+            }
+            return TranscriptionRequestHandle(cancelAction: request.cancel)
         }
 
-        return TranscriptionRequestHandle(cancelAction: {
-            request.cancel()
-        })
+        let coordinator = CandidateTranscriptionCoordinator(
+            fileURL: fileURL,
+            config: config,
+            performTranscription: performTranscription,
+            selectCandidate: selectCandidate,
+            completion: completion
+        )
+        coordinator.start()
+        return TranscriptionRequestHandle(cancelAction: coordinator.cancel)
+    }
+}
+
+private final class CandidateTranscriptionCoordinator {
+    private typealias ProviderResult = Result<String, GroqAPI.TranscriptionError>
+
+    private let lock = NSLock()
+    private let fileURL: URL
+    private let config: Config
+    private let performTranscription: GroqTranscriptionEngine.PerformTranscription
+    private let selectCandidate: GroqTranscriptionEngine.SelectCandidate
+    private let completion: (Result<String, TranscriptionEngineError>) -> Void
+    private var rawResult: ProviderResult?
+    private var hintedResult: ProviderResult?
+    private var transcriptionRequests: [GroqAPI.TranscriptionRequest] = []
+    private var selectionRequest: GroqCandidateSelector.Request?
+    private var cancelled = false
+    private var completed = false
+
+    init(
+        fileURL: URL,
+        config: Config,
+        performTranscription: @escaping GroqTranscriptionEngine.PerformTranscription,
+        selectCandidate: @escaping GroqTranscriptionEngine.SelectCandidate,
+        completion: @escaping (Result<String, TranscriptionEngineError>) -> Void
+    ) {
+        self.fileURL = fileURL
+        self.config = config
+        self.performTranscription = performTranscription
+        self.selectCandidate = selectCandidate
+        self.completion = completion
+    }
+
+    func start() {
+        let rawConfig = Config(
+            apiKey: config.apiKey,
+            model: config.model,
+            inputGain: config.inputGain,
+            micUID: config.micUID,
+            vocabularyHints: ""
+        )
+        let rawRequest = performTranscription(fileURL, rawConfig) { [weak self] result in
+            self?.receive(result, hinted: false)
+        }
+        let hintedRequest = performTranscription(fileURL, config) { [weak self] result in
+            self?.receive(result, hinted: true)
+        }
+
+        lock.lock()
+        if cancelled {
+            lock.unlock()
+            rawRequest.cancel()
+            hintedRequest.cancel()
+            return
+        }
+        transcriptionRequests = [rawRequest, hintedRequest]
+        lock.unlock()
+    }
+
+    func cancel() {
+        lock.lock()
+        guard !cancelled else { lock.unlock(); return }
+        cancelled = true
+        let requests = transcriptionRequests
+        let selection = selectionRequest
+        lock.unlock()
+
+        requests.forEach { $0.cancel() }
+        selection?.cancel()
+    }
+
+    private func receive(_ result: ProviderResult, hinted: Bool) {
+        lock.lock()
+        guard !cancelled, !completed else { lock.unlock(); return }
+        if hinted { hintedResult = result } else { rawResult = result }
+        guard let rawResult, let hintedResult else { lock.unlock(); return }
+        lock.unlock()
+        resolve(raw: rawResult, hinted: hintedResult)
+    }
+
+    private func resolve(raw: ProviderResult, hinted: ProviderResult) {
+        switch (raw, hinted) {
+        case (.success(let rawText), .success(let hintedText)):
+            guard rawText != hintedText else { finish(.success(rawText)); return }
+            let request = selectCandidate(rawText, hintedText, config.apiKey) { [weak self] choice in
+                self?.finish(.success(choice == "B" ? hintedText : rawText))
+            }
+            lock.lock()
+            if cancelled || completed {
+                lock.unlock()
+                request.cancel()
+            } else {
+                selectionRequest = request
+                lock.unlock()
+            }
+        case (.success(let rawText), .failure):
+            finish(.success(rawText))
+        case (.failure, .success(let hintedText)):
+            finish(.success(hintedText))
+        case (.failure, .failure(let error)):
+            finish(.failure(TranscriptionEngineError(error)))
+        }
+    }
+
+    private func finish(_ result: Result<String, TranscriptionEngineError>) {
+        lock.lock()
+        guard !cancelled, !completed else { lock.unlock(); return }
+        completed = true
+        lock.unlock()
+        completion(result)
     }
 }

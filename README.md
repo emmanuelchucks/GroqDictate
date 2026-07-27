@@ -23,6 +23,8 @@ If Input Monitoring is denied, GroqDictate falls back to best-effort key monitor
 
 If auto-paste is unavailable or denied, the transcript remains in your clipboard and GroqDictate shows a notice.
 
+For names and technical terms that are often misspelled, add a short comma-separated list under **Settings → Word Hints**. With hints enabled, GroqDictate compares prompted and unprompted Whisper results and returns one unchanged. This uses two free-tier audio requests plus a short selector request; empty hints use one audio request.
+
 ### Keyboard shortcuts
 
 - Right ⌘: start/stop dictation
@@ -80,16 +82,14 @@ make release \
 
 This builds, signs, notarizes, staples, verifies, and outputs `dist/GroqDictate.app` and `dist/GroqDictate.zip`.
 
-## Project docs
+## Agent guidance
 
-- Product direction: [`docs/product.md`](docs/product.md)
-- Architecture notes: [`docs/architecture.md`](docs/architecture.md)
-- Verification: [`docs/verification.md`](docs/verification.md)
+High-value engineering constraints and verification notes live in [`AGENTS.md`](AGENTS.md).
 
 ## Privacy
 
 - API keys are stored in macOS Keychain.
-- Audio is written to temporary files during processing and cleaned up by app flow.
+- Audio is sent to Groq for transcription, written to temporary files during processing, and cleaned up by app flow.
 - Diagnostics are structured for debugging, with secrets and sensitive text sanitized.
 
 ## License

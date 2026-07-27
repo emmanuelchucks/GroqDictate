@@ -3,7 +3,7 @@ import Cocoa
 final class SetupWindow: NSWindow, NSWindowDelegate {
     private static let systemDefaultMicToken = "__system_default__"
     private static let contentWidth: CGFloat = 460
-    private static let contentHeight: CGFloat = 360
+    private static let contentHeight: CGFloat = 430
 
     private let configurationController: SetupConfigurationController
     private let initialState: SetupConfigurationState
@@ -12,6 +12,7 @@ final class SetupWindow: NSWindow, NSWindowDelegate {
     private let modelPopup = NSPopUpButton()
     private let gainSlider = NSSlider()
     private let gainLabel = NSTextField(labelWithString: "2.0x")
+    private let vocabularyHintsField = NSTextField()
     private let statusLabel = NSTextField(labelWithString: "")
     private var doneButton: NSButton?
 
@@ -87,6 +88,18 @@ final class SetupWindow: NSWindow, NSWindowDelegate {
 
         gainLabel.font = .monospacedDigitSystemFont(ofSize: 13, weight: .medium)
         gainLabel.stringValue = String(format: "%.1fx", currentGain)
+
+        vocabularyHintsField.placeholderString = "PostgreSQL, Kubernetes, WebKit"
+        vocabularyHintsField.usesSingleLineMode = true
+        vocabularyHintsField.lineBreakMode = .byTruncatingTail
+        vocabularyHintsField.cell?.wraps = false
+        vocabularyHintsField.cell?.isScrollable = true
+        vocabularyHintsField.stringValue = initialState.vocabularyHints
+
+        let vocabularyHintsHelp = NSTextField(labelWithString: AppStrings.Setup.vocabularyHintsHelp)
+        vocabularyHintsHelp.font = .systemFont(ofSize: 10)
+        vocabularyHintsHelp.textColor = .tertiaryLabelColor
+
         statusLabel.font = .systemFont(ofSize: 11)
 
         let doneButton = NSButton(title: AppStrings.Setup.done, target: self, action: #selector(save))
@@ -122,6 +135,10 @@ final class SetupWindow: NSWindow, NSWindowDelegate {
             makeSection(title: AppStrings.Setup.modelLabel, views: [modelPopup]),
             makeSection(title: AppStrings.Setup.micLabel, views: [micPopup]),
             makeSection(title: AppStrings.Setup.inputGainLabel, views: [gainRow]),
+            makeSection(
+                title: AppStrings.Setup.vocabularyHintsLabel,
+                views: [vocabularyHintsField, vocabularyHintsHelp]
+            ),
             filler,
             footerRow
         ])
@@ -174,7 +191,8 @@ final class SetupWindow: NSWindow, NSWindowDelegate {
             selectedMicrophoneID: (micPopup.selectedItem?.representedObject as? String).flatMap {
                 $0 == Self.systemDefaultMicToken ? nil : $0
             },
-            inputGain: Float(gainSlider.doubleValue)
+            inputGain: Float(gainSlider.doubleValue),
+            vocabularyHints: vocabularyHintsField.stringValue
         )
 
         isSaving = true
@@ -195,6 +213,8 @@ final class SetupWindow: NSWindow, NSWindowDelegate {
                     self.showStatus(AppStrings.Setup.keyEmpty, isError: true)
                 case .failure(.invalidAPIKey):
                     self.showStatus(AppStrings.Setup.keyInvalid, isError: true)
+                case .failure(.vocabularyHintsTooLong):
+                    self.showStatus(AppStrings.Setup.vocabularyHintsTooLong, isError: true)
                 case .failure(.keychainFailure(let message)):
                     self.showStatus(AppStrings.Setup.keychainError(message), isError: true)
                 case .failure(.remoteInvalidKey):

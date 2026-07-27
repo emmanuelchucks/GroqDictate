@@ -5,6 +5,7 @@ enum AppConstants {
         static let groqAPIHost = URL(string: "https://api.groq.com")!
         static let groqModels = URL(string: "https://api.groq.com/openai/v1/models")!
         static let groqTranscriptions = URL(string: "https://api.groq.com/openai/v1/audio/transcriptions")!
+        static let groqChatCompletions = URL(string: "https://api.groq.com/openai/v1/chat/completions")!
 
         static let microphonePrivacySettings = URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_Microphone")!
         static let accessibilityPrivacySettings = URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility")!

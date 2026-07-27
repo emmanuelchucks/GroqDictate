@@ -93,7 +93,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             values: [
                 "input_gain": String(format: "%.1f", config.inputGain),
                 "mic_selected": config.micUID == nil ? "false" : "true",
-                "model": config.model
+                "model": config.model,
+                "provider": "groq"
             ]
         )
     }

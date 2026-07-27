@@ -1,60 +1,20 @@
 # Contributing
 
-Thanks for helping with GroqDictate.
+Use focused changes and explain the user-visible reason for them. Read [`AGENTS.md`](AGENTS.md) before changing audio, transcription, focus, paste, permissions, or diagnostics behavior.
 
-## Keep it simple
-
-- Keep changes small and focused.
-- Prefer fixing one clear problem per PR.
-- Avoid broad refactors unless they are necessary.
-
-## Local setup
-
-Requirements:
-
-- macOS 14+
-- Xcode 16+ with Command Line Tools
-
-Useful commands:
+Requirements: macOS 14+, Xcode 26.x, and XcodeGen 2.45+.
 
 ```bash
 make doctor
 make test
+make validate
 make dev
 ```
 
-Prefer Makefile targets over raw `xcodebuild` commands for normal local work.
-- `make test` runs signed local Debug tests.
-- `make validate` runs the unsigned automation validation path.
-- `make run` is a short alias for `make dev`.
-
-Run a single signed local test:
+`project.yml` is the Xcode project source of truth. Prefer Make targets over ad hoc `xcodebuild` commands. Run a focused suite with:
 
 ```bash
 make test TEST_ONLY=GroqDictateTests/HotkeyMonitorTests
 ```
 
-If you want a clean local run:
-
-```bash
-make dev RESET=1 FORCE=1
-```
-
-## Pull requests
-
-- Explain what changed and why.
-- Include quick manual test steps.
-- Add screenshots only for visible UI changes.
-- Make sure the app builds before opening the PR.
-
-Build check:
-
-```bash
-make test
-```
-
-## Tests
-
-- Add tests when they validate behavior or prevent regressions.
-- Skip tests that only restate implementation details or wording.
-- If no meaningful test exists for a change, call that out in the PR.
+Add durable tests for meaningful behavior or failure boundaries. For a pull request, describe the motivation, verification, remaining risks, and screenshots only when the UI visibly changed.

@@ -12,6 +12,7 @@ struct SetupConfigurationState: Equatable {
     let microphoneOptions: [MicrophoneOption]
     let selectedMicrophoneID: String?
     let inputGain: Float
+    let vocabularyHints: String
 }
 
 struct SetupSaveRequest: Equatable {
@@ -19,11 +20,13 @@ struct SetupSaveRequest: Equatable {
     let selectedModelID: String
     let selectedMicrophoneID: String?
     let inputGain: Float
+    let vocabularyHints: String
 }
 
 enum SetupSaveError: Error, Equatable {
     case emptyAPIKey
     case invalidAPIKey
+    case vocabularyHintsTooLong
     case keychainFailure(String)
     case remoteInvalidKey
     case remoteAccountRestricted
@@ -38,25 +41,19 @@ final class SetupConfigurationController {
     private let loadSelectedModelID: () -> String?
     private let loadSelectedMicrophoneID: () -> String?
     private let loadInputGain: () -> Float
+    private let loadVocabularyHints: () -> String?
     private let loadInputDevices: () -> [AudioDevice]
     private let saveAPIKey: (String) throws -> Void
-    private let savePreferences: (String, String?, Float) -> Void
+    private let savePreferences: (String, String?, Float, String) -> Void
     private let validateRemotely: RemoteValidation
 
     convenience init() {
         self.init(
-            loadAPIKey: {
-                KeychainHelper.load(key: Config.KeychainKey.apiKey)
-            },
-            loadSelectedModelID: {
-                UserDefaults.standard.string(forKey: Config.DefaultsKey.model)
-            },
-            loadSelectedMicrophoneID: {
-                UserDefaults.standard.string(forKey: Config.DefaultsKey.micUID)
-            },
-            loadInputGain: {
-                UserDefaults.standard.float(forKey: Config.DefaultsKey.inputGain)
-            },
+            loadAPIKey: { KeychainHelper.load(key: Config.KeychainKey.apiKey) },
+            loadSelectedModelID: { UserDefaults.standard.string(forKey: Config.DefaultsKey.model) },
+            loadSelectedMicrophoneID: { UserDefaults.standard.string(forKey: Config.DefaultsKey.micUID) },
+            loadInputGain: { UserDefaults.standard.float(forKey: Config.DefaultsKey.inputGain) },
+            loadVocabularyHints: { UserDefaults.standard.string(forKey: Config.DefaultsKey.vocabularyHints) },
             loadInputDevices: AudioRecorder.availableInputDevices,
             saveAPIKey: Config.saveAPIKey,
             savePreferences: Config.savePreferences,
@@ -69,15 +66,17 @@ final class SetupConfigurationController {
         loadSelectedModelID: @escaping () -> String?,
         loadSelectedMicrophoneID: @escaping () -> String?,
         loadInputGain: @escaping () -> Float,
+        loadVocabularyHints: @escaping () -> String?,
         loadInputDevices: @escaping () -> [AudioDevice],
         saveAPIKey: @escaping (String) throws -> Void,
-        savePreferences: @escaping (String, String?, Float) -> Void,
+        savePreferences: @escaping (String, String?, Float, String) -> Void,
         validateRemotely: @escaping RemoteValidation = { _, _, completion in completion(.networkUnavailable) }
     ) {
         self.loadAPIKey = loadAPIKey
         self.loadSelectedModelID = loadSelectedModelID
         self.loadSelectedMicrophoneID = loadSelectedMicrophoneID
         self.loadInputGain = loadInputGain
+        self.loadVocabularyHints = loadVocabularyHints
         self.loadInputDevices = loadInputDevices
         self.saveAPIKey = saveAPIKey
         self.savePreferences = savePreferences
@@ -88,12 +87,8 @@ final class SetupConfigurationController {
         let modelOptions = Config.modelOptions
         let selectedModelID = Config.resolvedModelID(loadSelectedModelID())
         let microphoneOptions = filteredMicrophoneOptions(from: loadInputDevices())
-        let selectedMicrophoneID = resolvedSelectedMicrophoneID(
-            from: loadSelectedMicrophoneID(),
-            options: microphoneOptions
-        )
+        let selectedMicrophoneID = resolvedSelectedMicrophoneID(from: loadSelectedMicrophoneID(), options: microphoneOptions)
         let savedGain = loadInputGain()
-        let inputGain = savedGain > 0 ? savedGain : Config.DefaultValue.inputGain
 
         return SetupConfigurationState(
             existingAPIKey: loadAPIKey() ?? "",
@@ -101,7 +96,8 @@ final class SetupConfigurationController {
             modelOptions: modelOptions,
             microphoneOptions: microphoneOptions,
             selectedMicrophoneID: selectedMicrophoneID,
-            inputGain: inputGain
+            inputGain: savedGain > 0 ? savedGain : Config.DefaultValue.inputGain,
+            vocabularyHints: Config.normalizedVocabularyHints(loadVocabularyHints() ?? "")
         )
     }
 
@@ -118,52 +114,44 @@ final class SetupConfigurationController {
             return
         }
 
+        let vocabularyHints = Config.normalizedVocabularyHints(request.vocabularyHints)
+        guard vocabularyHints.count <= Config.maxVocabularyHintsLength else {
+            AppLog.metric("setup_validation", category: .app, level: .event, values: ["result": "hints_too_long", "stage": "local"])
+            completion(.failure(.vocabularyHintsTooLong))
+            return
+        }
+
         let state = makeState()
         let selectedModelID = Config.resolvedModelID(request.selectedModelID)
-        let selectedMicrophoneID = resolvedSelectedMicrophoneID(
-            from: request.selectedMicrophoneID,
-            options: state.microphoneOptions
-        )
+        let selectedMicrophoneID = resolvedSelectedMicrophoneID(from: request.selectedMicrophoneID, options: state.microphoneOptions)
 
         validateRemotely(key, selectedModelID) { [saveAPIKey, savePreferences] validationResult in
             AppLog.metric(
                 "setup_validation",
                 category: .app,
                 level: .event,
-                values: [
-                    "model": selectedModelID,
-                    "result": Self.describe(validationResult),
-                    "stage": "remote"
-                ]
+                values: ["model": selectedModelID, "result": Self.describe(validationResult), "stage": "remote"]
             )
 
             switch validationResult {
             case .valid, .networkUnavailable, .serviceUnavailable:
                 do {
                     try saveAPIKey(key)
-                    savePreferences(selectedModelID, selectedMicrophoneID, request.inputGain)
+                    savePreferences(selectedModelID, selectedMicrophoneID, request.inputGain, vocabularyHints)
                     AppLog.metric(
                         "setup_save",
                         category: .app,
                         level: .event,
-                        values: [
-                            "model": selectedModelID,
-                            "remote_validation": Self.describe(validationResult),
-                            "result": "saved"
-                        ]
+                        values: ["model": selectedModelID, "remote_validation": Self.describe(validationResult), "result": "saved"]
                     )
                     completion(.success(()))
                 } catch {
                     completion(.failure(.keychainFailure(error.localizedDescription)))
                 }
-            case .invalidKey:
-                completion(.failure(.remoteInvalidKey))
-            case .accountRestricted:
-                completion(.failure(.remoteAccountRestricted))
-            case .modelUnavailable:
-                completion(.failure(.remoteModelUnavailable))
-            case .other(let message):
-                completion(.failure(.remoteValidationFailed(message)))
+            case .invalidKey: completion(.failure(.remoteInvalidKey))
+            case .accountRestricted: completion(.failure(.remoteAccountRestricted))
+            case .modelUnavailable: completion(.failure(.remoteModelUnavailable))
+            case .other(let message): completion(.failure(.remoteValidationFailed(message)))
             }
         }
     }
