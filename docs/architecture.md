@@ -11,6 +11,24 @@ This document captures non-obvious implementation decisions and runtime constrai
 
 Keep business transitions out of UI views. Keep user-facing copy out of low-level services where possible.
 
+## iOS target
+
+The iPhone app is a separate `GroqDictateIOS` target in the same repository. It owns a materially different capture workflow under `iOS/Sources/` rather than adding iOS conditionals to the macOS menu-bar code.
+
+Its durable unit is a recording session containing ordered five-minute M4A segments and an atomically written JSON manifest. The manifest reserves each segment before capture. Normal rollover prepares the next recorder while the current recorder and audio session remain active, then swaps files synchronously without deactivating background audio. Completed segments move through `pending`, `transcribing`, `complete`, or retryable `failed`; a reserved segment with no audio becomes non-retryable `unavailable`. Source audio is never deleted automatically. On relaunch, interrupted capture and upload states are reconciled against the files that actually exist.
+
+Audio-session interruptions finalize the active segment. When iOS reports that the interruption ended, the app attempts to resume into a new segment. This preserves pre-interruption audio but cannot capture through an accepted phone call, which owns the microphone. Five-minute rollover is not an interruption and must keep the audio session continuously active, especially while the app is backgrounded.
+
+On iOS 18+, a WidgetKit control invokes an `AudioRecordingIntent` in the containing app and a minimal ActivityKit Live Activity remains active for the duration of recording. Background start uses the verified mixable configuration (`.record`, `.default`, `.allowBluetoothHFP` plus `.mixWithOthers`), prepares `AVAudioRecorder`, and calls `record()` without explicitly activating the audio session. Stop deactivates the session normally; the app does not keep an idle recording session active.
+
+The first iOS version sends bounded segments directly to Groq using a Keychain-stored API key. Optional vocabulary hints are stored as ordinary local settings, normalized to a conservative 500-character UI budget, and sent as Groq's `prompt` field on every segment. Groq documents a 224-token prompt maximum; the smaller character budget avoids adding a Whisper tokenizer solely for settings validation. A backend may later own credentials and background jobs, but it must preserve the local durable queue and recovery contract.
+
+iOS keeps bounded, local timing diagnostics in `Library/Application Support/GroqDictate/Diagnostics/` (`timing.jsonl` and one rotated file, at most 256 KiB each, excluded from backups). Events correlate recording and request UUIDs with attempt timing, HTTP status, retry decisions, transport phases, and app lifecycle transitions. They never include audio, transcript, vocabulary, credentials, response bodies, arbitrary errors, addresses, URLs, or unrestricted headers. Each upload attempt owns and invalidates an isolated `URLSession`; transaction metrics record enough metadata to distinguish connection, upload, and response stalls without exposing request content.
+
+Recorder UI is derived from an explicit `idle`, `starting`, `recording`, `stopping`, or `interrupted` lifecycle. Resume is available only for `interrupted`; a normal stop enters `stopping` synchronously before recorder finalization so asynchronous persistence cannot momentarily present interruption UI.
+
+Visual identity is shared with macOS: the waveform icon, near-black base, orange accent, compact status language, and calm actionable errors. Controls remain platform-native rather than reproducing the macOS floating panel literally.
+
 ## Runtime surfaces
 
 GroqDictate is an accessory/menu bar app. The normal user-facing surfaces are:
@@ -51,7 +69,7 @@ Future direct insertion through Accessibility must stay additive:
 
 Do not restore the previous clipboard by default.
 
-## Audio pipeline
+## macOS audio pipeline
 
 The app records 16 kHz mono 16-bit PCM WAV. After stop, it preserves the captured audio and may compress to FLAC when the file is large enough to justify the size/latency tradeoff.
 

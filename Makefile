@@ -15,6 +15,9 @@ DEV_DESTINATION := platform=macOS,arch=$(HOST_ARCH)
 RELEASE_DESTINATION := generic/platform=macOS
 VALIDATE_DESTINATION := platform=macOS
 LOCAL_TEST_DESTINATION := $(DEV_DESTINATION)
+IOS_SCHEME := GroqDictateIOS
+IOS_DERIVED_DATA := $(BUILD_ROOT)/iOSDerivedData
+IOS_BUILD_DESTINATION := generic/platform=iOS Simulator
 
 DEBUG_APP := $(DERIVED_DATA)/Build/Products/Debug/$(APP_NAME).app
 DEBUG_EXECUTABLE := $(DEBUG_APP)/Contents/MacOS/$(APP_NAME)
@@ -44,7 +47,7 @@ INSTALL ?= 0
 DEBUG_PERSIST ?= 0
 TEST_ONLY ?=
 
-.PHONY: help doctor clean reset generate verify-generated-project validate dev run test release
+.PHONY: help doctor clean reset generate verify-generated-project validate dev run test ios-build release
 
 help:
 	@echo "GroqDictate pipeline (simplified)"
@@ -55,6 +58,7 @@ help:
 	@echo "  make test                   Run signed local Debug tests"
 	@echo "  make validate               Run unsigned automation validation"
 	@echo "  make dev                    Build Debug, install to /Applications, run"
+	@echo "  make ios-build              Build the unsigned iPhone simulator app"
 	@echo "  make run                    Alias for make dev"
 	@echo "  make release                Build Release, sign, notarize, verify"
 	@echo "  make reset FORCE=1          Remove local app/system traces for clean testing"
@@ -132,6 +136,19 @@ validate:
 		build; \
 	test -d "$(VALIDATE_RESULT_BUNDLE)" || { echo "❌ Missing xcresult bundle at $(VALIDATE_RESULT_BUNDLE)"; exit 1; }; \
 	echo "✅ Validation complete"
+
+ios-build:
+	@set -euo pipefail; \
+	$(MAKE) --no-print-directory verify-generated-project; \
+	xcodebuild \
+		-project "$(PROJECT)" \
+		-scheme "$(IOS_SCHEME)" \
+		-configuration Debug \
+		-destination "$(IOS_BUILD_DESTINATION)" \
+		-derivedDataPath "$(IOS_DERIVED_DATA)" \
+		CODE_SIGNING_ALLOWED=NO \
+		build; \
+	echo "✅ iPhone simulator build complete"
 
 test:
 	@set -euo pipefail; \

@@ -1,14 +1,14 @@
 # GroqDictate
 
-GroqDictate is a small macOS menu bar dictation app.
+GroqDictate is a focused Groq Whisper dictation app for macOS and iPhone.
 
-Press **Right ⌘** to start recording and press it again to stop. The app transcribes with **Groq Whisper**, writes the transcript to your clipboard, and tries to paste it into the app you were working in.
+On macOS, press **Right ⌘** to record, transcribe, copy, and paste into the app where you were working. On iPhone, recordings are preserved locally in durable five-minute segments before transcription, with retryable processing for long or interrupted sessions.
 
 ## For Users
 
 ### What you need
 
-- macOS 14+
+- macOS 14+ or iOS 17+
 - A Groq API key (`gsk_...`)
 
 ### First-time setup
@@ -30,7 +30,20 @@ If auto-paste is unavailable or denied, the transcript remains in your clipboard
 
 Wireless Bluetooth microphones can take a moment to wake on macOS. If the panel waveform is flat at first, begin speaking when it starts moving. Wired/USB microphones generally avoid this wake-up delay.
 
+### iPhone recording safety
+
+- On iOS 18+, add **GroqDictate Recording** from the Control Center gallery to start or stop while another app remains visible. iOS 17 continues to use the in-app control.
+- A minimal Live Activity stays visible while Control Center recording is active.
+- Original audio is retained after successful transcription.
+- Long recordings roll into five-minute segments without deactivating background audio.
+- Failed or offline transcriptions remain available for manual retry; segments with no audio are identified as non-retryable.
+- Calls and alarms finalize the current segment before the app attempts to resume.
+- Optional vocabulary hints improve recognition of names, acronyms, and technical terms.
+- An accepted call can create a recording gap because iOS gives the call control of the microphone; audio captured before it remains safe.
+
 ## For Developers
+
+The macOS and iOS apps are separate targets in the same generated Xcode project. Platform-specific workflows remain isolated under `Sources/` and `iOS/Sources/`, while product identity and Groq behavior stay coordinated in one repository.
 
 ### Requirements
 
@@ -46,6 +59,7 @@ make generate
 make test
 make validate
 make dev
+make ios-build
 ```
 
 `project.yml` is the source of truth for the Xcode project. Regenerate `GroqDictate.xcodeproj` with `make generate` after changing targets or build settings.

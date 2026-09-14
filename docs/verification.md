@@ -1,6 +1,6 @@
 # Verification
 
-Automated tests should cover high-value behavior and edge cases. Manual checks should stay focused on macOS behavior that tests cannot reliably prove: permissions, focus, global hotkeys, clipboard history, and real Groq transcription.
+Automated tests should cover high-value behavior and edge cases. Manual checks should focus on platform behavior tests cannot reliably prove: macOS permissions/focus/hotkeys and iPhone microphone, background, interruption, recovery, and real Groq transcription.
 
 ## Test philosophy
 
@@ -29,7 +29,13 @@ Run full automation validation:
 make validate
 ```
 
-Run a fresh debug app with persistent diagnostics:
+Build the iPhone target:
+
+```bash
+make ios-build
+```
+
+Run a fresh macOS debug app with persistent diagnostics:
 
 ```bash
 make dev RESET=1 FORCE=1 DEBUG_PERSIST=1
@@ -37,7 +43,22 @@ make dev RESET=1 FORCE=1 DEBUG_PERSIST=1
 
 Use `project.yml` as the Xcode project source of truth. Run `make generate` only when target/project structure changes.
 
-## Manual checks
+## iPhone manual checks
+
+Run these on the physical target before treating the iPhone app as reliable:
+
+1. Record, stop, and share the original audio without configuring Groq.
+2. Configure a valid key; record and confirm transcript, clipboard copy, and retained source audio.
+3. Record with the screen locked and while using a non-audio app.
+4. Exercise a dismissed alarm, rejected call, and accepted call; confirm every pre-interruption segment remains available and capture resumes or clearly asks for one tap.
+5. Disable networking before stop, restore it, and retry pending transcription.
+6. Record beyond one five-minute rollover in both foreground and locked/background states; confirm the recorder stays active, the next audio file exists, and ordered transcription completes without manual retry.
+7. Terminate and relaunch during a recording; confirm finalized data is recovered and no existing session disappears.
+8. Stop after returning from a locked/background recording and confirm no paused or Resume state appears during finalization.
+9. Save vocabulary hints, confirm they are included once in each multipart transcription request, and confirm an empty field is omitted.
+10. Human-review the compact UI, waveform branding, copy tone, and recording-state clarity.
+
+## macOS manual checks
 
 Run these against a Debug or release-candidate build when the touched area warrants it.
 

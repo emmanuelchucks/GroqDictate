@@ -1,8 +1,20 @@
 # Product Direction
 
-GroqDictate is a macOS menu bar dictation tool that should feel like a single global shortcut, not a traditional app.
+GroqDictate is a focused dictation product for macOS and iPhone. The macOS app should feel like a single global shortcut; the iPhone app should feel like a trustworthy recorder whose audio cannot disappear because transcription failed.
 
-## Core workflow
+## iPhone workflow
+
+1. On iOS 18+, tap the GroqDictate Control Center control to start or stop without leaving the current app; the in-app button remains available on iOS 17.
+2. Continue using the phone while a compact, truthful Live Activity shows that recording is active.
+3. Persist ordered audio segments throughout long recordings.
+4. Finalize the current segment when calls, alarms, or route changes interrupt capture.
+5. Transcribe each completed segment with bounded automatic retries.
+6. Keep retryable uploads pending, distinguish segments that were never recorded, and keep every existing audio file available to share.
+7. Apply the user's optional vocabulary hints to every segment and assemble successful segments into one copyable transcript.
+
+The iPhone app shares the macOS waveform icon, orange-on-near-black identity, and compact, calm error language. Native iPhone interaction conventions take precedence over visually cloning the macOS panel.
+
+## macOS core workflow
 
 1. Press **Right ⌘** to start recording.
 2. Speak.
@@ -51,7 +63,7 @@ Out of scope unless explicitly reprioritized:
 
 - Always-on meeting transcription.
 - Local/offline speech models.
-- Full long-audio chunking pipeline.
+- Full long-audio chunking pipeline in the macOS app.
 - Broad multi-provider configuration.
 - Large model/language management UI.
 - Automatic previous-clipboard restoration.
