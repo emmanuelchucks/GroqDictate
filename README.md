@@ -32,8 +32,8 @@ Wireless Bluetooth microphones can take a moment to wake on macOS. If the panel 
 
 ### iPhone recording safety
 
-- On iOS 18+, add **GroqDictate Recording** from the Control Center gallery to start or stop while another app remains visible. iOS 17 continues to use the in-app control.
-- A minimal Live Activity stays visible while Control Center recording is active.
+- Start and stop recording from the in-app control.
+- A fully completed transcript is copied to the system clipboard automatically; manual copy remains available from the recording detail.
 - Original audio is retained after successful transcription.
 - Long recordings roll into five-minute segments without deactivating background audio.
 - Failed or offline transcriptions remain available for manual retry; segments with no audio are identified as non-retryable.

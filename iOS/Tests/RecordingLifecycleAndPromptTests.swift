@@ -54,4 +54,24 @@ final class RecordingLifecycleAndPromptTests: XCTestCase {
 
         XCTAssertFalse(text.contains("name=\"prompt\""))
     }
+
+    func testAutomaticClipboardTextRequiresCompletedNonblankTranscript() {
+        var session = RecordingSession()
+        session.transcript = "Physical iPhone clipboard test"
+
+        session.state = .processing
+        XCTAssertNil(GroqDictateAppModel.automaticClipboardText(for: session))
+
+        session.state = .failed
+        XCTAssertNil(GroqDictateAppModel.automaticClipboardText(for: session))
+
+        session.state = .complete
+        XCTAssertEqual(
+            GroqDictateAppModel.automaticClipboardText(for: session),
+            "Physical iPhone clipboard test"
+        )
+
+        session.transcript = "  \n"
+        XCTAssertNil(GroqDictateAppModel.automaticClipboardText(for: session))
+    }
 }

@@ -4,13 +4,13 @@ GroqDictate is a focused dictation product for macOS and iPhone. The macOS app s
 
 ## iPhone workflow
 
-1. On iOS 18+, tap the GroqDictate Control Center control to start or stop without leaving the current app; the in-app button remains available on iOS 17.
-2. Continue using the phone while a compact, truthful Live Activity shows that recording is active.
-3. Persist ordered audio segments throughout long recordings.
-4. Finalize the current segment when calls, alarms, or route changes interrupt capture.
-5. Transcribe each completed segment with bounded automatic retries.
-6. Keep retryable uploads pending, distinguish segments that were never recorded, and keep every existing audio file available to share.
-7. Apply the user's optional vocabulary hints to every segment and assemble successful segments into one copyable transcript.
+1. Start and stop recording from the in-app control.
+2. Persist ordered audio segments throughout long recordings.
+3. Finalize the current segment when calls, alarms, or route changes interrupt capture.
+4. Transcribe each completed segment with bounded automatic retries.
+5. Keep retryable uploads pending, distinguish segments that were never recorded, and keep every existing audio file available to share.
+6. Apply the user's optional vocabulary hints to every segment and assemble successful segments into one transcript.
+7. Automatically copy a fully completed transcript to the system clipboard while keeping manual copy available.
 
 The iPhone app shares the macOS waveform icon, orange-on-near-black identity, and compact, calm error language. Native iPhone interaction conventions take precedence over visually cloning the macOS panel.
 

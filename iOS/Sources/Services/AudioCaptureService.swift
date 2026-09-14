@@ -65,20 +65,18 @@ final class AudioCaptureService: NSObject {
             throw CaptureError.permissionDenied
         }
 
-        // This exact mixable recording configuration is required for a cold
-        // AudioRecordingIntent start while another app remains foregrounded.
+        // mixWithOthers is supported with playAndRecord, not record. This
+        // preserves capture while avoiding unnecessary interruption of audio
+        // already playing on the device.
         try audioSession.setCategory(
-            .record,
+            .playAndRecord,
             mode: .default,
             options: [.allowBluetoothHFP, .mixWithOthers]
         )
         try? audioSession.setPrefersNoInterruptionsFromSystemAlerts(true)
 
-        // Do not explicitly activate here. AudioRecordingIntent is allowed to
-        // start AVAudioRecorder while the containing app is in the background,
-        // but AVAudioSession.setActive(true) is rejected there with
-        // cannotInterruptOthers. AVAudioRecorder performs the supported
-        // implicit activation when record() begins.
+        // AVAudioRecorder activates the configured recording session when
+        // record() begins; explicit activation is unnecessary here.
         let recorder = try makeRecorder(fileURL: fileURL)
         guard recorder.record() else { throw CaptureError.couldNotStart }
         self.recorder = recorder
@@ -116,11 +114,16 @@ final class AudioCaptureService: NSObject {
         return recorder
     }
 
-    @objc private func handleInterruption(_ notification: Notification) {
-        guard let rawType = notification.userInfo?[AVAudioSessionInterruptionTypeKey] as? UInt,
-              let type = AVAudioSession.InterruptionType(rawValue: rawType)
-        else { return }
+    @objc nonisolated private func handleInterruption(_ notification: Notification) {
+        guard let rawType = notification.userInfo?[AVAudioSessionInterruptionTypeKey] as? UInt else { return }
+        let rawOptions = notification.userInfo?[AVAudioSessionInterruptionOptionKey] as? UInt ?? 0
+        Task { @MainActor [weak self] in
+            self?.processInterruption(type: rawType, options: rawOptions)
+        }
+    }
 
+    private func processInterruption(type rawType: UInt, options rawOptions: UInt) {
+        guard let type = AVAudioSession.InterruptionType(rawValue: rawType) else { return }
         switch type {
         case .began:
             recorder?.stop()
@@ -128,7 +131,6 @@ final class AudioCaptureService: NSObject {
             isRecording = false
             onInterruption?(.began)
         case .ended:
-            let rawOptions = notification.userInfo?[AVAudioSessionInterruptionOptionKey] as? UInt ?? 0
             let shouldResume = AVAudioSession.InterruptionOptions(rawValue: rawOptions).contains(.shouldResume)
             onInterruption?(.ended(shouldResume: shouldResume))
         @unknown default:
@@ -136,9 +138,15 @@ final class AudioCaptureService: NSObject {
         }
     }
 
-    @objc private func handleRouteChange(_ notification: Notification) {
+    @objc nonisolated private func handleRouteChange(_ notification: Notification) {
+        guard let rawReason = notification.userInfo?[AVAudioSessionRouteChangeReasonKey] as? UInt else { return }
+        Task { @MainActor [weak self] in
+            self?.processRouteChange(reason: rawReason)
+        }
+    }
+
+    private func processRouteChange(reason rawReason: UInt) {
         guard isRecording,
-              let rawReason = notification.userInfo?[AVAudioSessionRouteChangeReasonKey] as? UInt,
               AVAudioSession.RouteChangeReason(rawValue: rawReason) == .oldDeviceUnavailable
         else { return }
         stop()

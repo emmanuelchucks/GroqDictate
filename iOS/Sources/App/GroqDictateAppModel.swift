@@ -1,26 +1,9 @@
-import ActivityKit
 import AVFoundation
 import Foundation
 import UIKit
 
 @MainActor
 final class GroqDictateAppModel: ObservableObject {
-    enum ExternalIntentError: LocalizedError {
-        case microphonePermissionRequired
-        case recordingCouldNotStart
-        case transcriptionIncomplete
-        case operationInProgress
-
-        var errorDescription: String? {
-            switch self {
-            case .microphonePermissionRequired: return "Open GroqDictate once and allow microphone access"
-            case .recordingCouldNotStart: return "GroqDictate could not start recording"
-            case .transcriptionIncomplete: return "The audio is safe, but transcription is not complete"
-            case .operationInProgress: return "GroqDictate is already finishing another request"
-            }
-        }
-    }
-
     static let shared = GroqDictateAppModel()
     @Published private(set) var sessions: [RecordingSession] = []
     @Published private(set) var currentSessionID: UUID?
@@ -40,10 +23,8 @@ final class GroqDictateAppModel: ObservableObject {
     private var processingTasks: [UUID: Task<Void, Never>] = [:]
     private var shouldResumeAfterInterruption = false
     private var interruptionFinalizationTask: Task<Void, Never>?
-    private var recordingActivity: Activity<GroqRecordingAttributes>?
     private var hasRestored = false
     private var isRestoring = false
-    private var externalIntentInFlight = false
     private let segmentDuration: Duration = .seconds(5 * 60)
     private static let vocabularyDefaultsKey = "transcription-vocabulary-hints"
 
@@ -146,72 +127,11 @@ final class GroqDictateAppModel: ObservableObject {
         TimingDiagnostics.shared.record(.restorationFinished)
     }
 
-    /// Called by AudioRecordingIntent in the containing app process.
-    func toggleFromExternalIntent() async throws {
-        guard !externalIntentInFlight else { throw ExternalIntentError.operationInProgress }
-        externalIntentInFlight = true
-        defer { externalIntentInFlight = false }
-
-        // AudioRecordingIntent's background capture authorization is
-        // time-sensitive. Do not run session recovery before record() starts.
-        if capture.isRecording || currentSessionID != nil {
-            let sessionID = currentSessionID
-            await stopSession()
-            guard let sessionID,
-                  let session = session(id: sessionID),
-                  session.state == .complete,
-                  !session.transcript.isEmpty
-            else {
-                throw ExternalIntentError.transcriptionIncomplete
-            }
-            return
-        }
-
-        guard AVAudioApplication.shared.recordPermission == .granted else {
-            throw ExternalIntentError.microphonePermissionRequired
-        }
-
-        lifecycle = .starting
-        await startSession(requestPermission: false)
-        guard capture.isRecording, let sessionID = currentSessionID else {
-            throw ExternalIntentError.recordingCouldNotStart
-        }
-
-        do {
-            let attributes = GroqRecordingAttributes(sessionID: sessionID)
-            let content = ActivityContent(
-                state: GroqRecordingAttributes.ContentState(startedAt: Date()),
-                staleDate: nil
-            )
-            recordingActivity = try Activity.request(
-                attributes: attributes,
-                content: content,
-                pushType: nil
-            )
-            TimingDiagnostics.shared.record(.recordingActivityStarted, sessionID: sessionID)
-        } catch {
-            TimingDiagnostics.shared.record(
-                .recordingActivityFailed,
-                sessionID: sessionID,
-                code: (error as NSError).code
-            )
-            await stopSession()
-            throw error
-        }
-
-        return
-    }
-
     private func restore() async {
         do {
-            if capture.isRecording {
-                sessions = try await store.loadAll()
-            } else {
-                sessions = try await store.recoverInterruptedSessions()
-                for activity in Activity<GroqRecordingAttributes>.activities {
-                    await activity.end(nil, dismissalPolicy: .immediate)
-                }
-            }
+            sessions = capture.isRecording
+                ? try await store.loadAll()
+                : try await store.recoverInterruptedSessions()
             if !apiKey.isEmpty { retryAll() }
         } catch {
             errorMessage = "Saved recordings could not be loaded"
@@ -275,8 +195,13 @@ final class GroqDictateAppModel: ObservableObject {
     private func stopSession() async {
         lifecycle = .stopping
         shouldResumeAfterInterruption = false
-        rotationTask?.cancel()
+        let pendingRotation = rotationTask
+        pendingRotation?.cancel()
+        rotationTask = nil
         elapsedTask?.cancel()
+        if let pendingRotation {
+            await pendingRotation.value
+        }
         if let interruptionFinalizationTask {
             await interruptionFinalizationTask.value
             self.interruptionFinalizationTask = nil
@@ -287,7 +212,6 @@ final class GroqDictateAppModel: ObservableObject {
         }
         capture.stop()
         TimingDiagnostics.shared.record(.recordingStopped, sessionID: sessionID)
-        await endRecordingActivity()
         await finalizeActiveSegment(sessionID: sessionID, interrupted: false)
         currentSessionID = nil
         activeSegmentID = nil
@@ -297,7 +221,8 @@ final class GroqDictateAppModel: ObservableObject {
     }
 
     private func rotateSegment() async {
-        guard let sessionID = currentSessionID,
+        guard lifecycle == .recording,
+              let sessionID = currentSessionID,
               let previousSegmentID = activeSegmentID,
               capture.isRecording
         else { return }
@@ -317,7 +242,30 @@ final class GroqDictateAppModel: ObservableObject {
             // Reserve the next segment durably while the current recorder is
             // still active. No storage await occurs during the recorder swap.
             try await store.save(session)
+            guard lifecycle == .recording,
+                  currentSessionID == sessionID,
+                  activeSegmentID == previousSegmentID,
+                  capture.isRecording,
+                  !Task.isCancelled
+            else {
+                session.segments.removeAll { $0.id == nextSegment.id }
+                try? await store.save(session)
+                replace(session)
+                return
+            }
+
             let nextURL = await store.audioURL(sessionID: sessionID, fileName: fileName)
+            guard lifecycle == .recording,
+                  currentSessionID == sessionID,
+                  activeSegmentID == previousSegmentID,
+                  capture.isRecording,
+                  !Task.isCancelled
+            else {
+                session.segments.removeAll { $0.id == nextSegment.id }
+                try? await store.save(session)
+                replace(session)
+                return
+            }
 
             do {
                 try capture.rotate(fileURL: nextURL)
@@ -347,7 +295,6 @@ final class GroqDictateAppModel: ObservableObject {
                 lifecycle = .idle
                 capture.stop()
                 elapsedTask?.cancel()
-                await endRecordingActivity()
                 await process(sessionID: sessionID)
                 errorMessage = "\(IOSAppStrings.Errors.micError) — completed audio is safe"
                 return
@@ -397,12 +344,19 @@ final class GroqDictateAppModel: ObservableObject {
             shouldResumeAfterInterruption = lifecycle == .recording
             guard shouldResumeAfterInterruption else { return }
             lifecycle = .interrupted
-            rotationTask?.cancel()
+            let pendingRotation = rotationTask
+            pendingRotation?.cancel()
+            rotationTask = nil
             elapsedTask?.cancel()
             guard let sessionID = currentSessionID else { return }
             interruptionFinalizationTask = Task { [weak self] in
-                guard let self else { return }
-                await endRecordingActivity()
+                if let pendingRotation {
+                    await pendingRotation.value
+                }
+                guard let self,
+                      lifecycle == .interrupted || lifecycle == .starting,
+                      currentSessionID == sessionID
+                else { return }
                 await finalizeActiveSegment(sessionID: sessionID, interrupted: true)
             }
         case .ended(let shouldResume):
@@ -447,7 +401,12 @@ final class GroqDictateAppModel: ObservableObject {
             try? await Task.sleep(for: segmentDuration)
             guard !Task.isCancelled else { return }
             await self?.rotateSegment()
-            guard let self, currentSessionID != nil, capture.isRecording else { return }
+            guard let self,
+                  !Task.isCancelled,
+                  lifecycle == .recording,
+                  currentSessionID != nil,
+                  capture.isRecording
+            else { return }
             startElapsedAndRotation()
         }
         elapsedTask = Task { [weak self] in
@@ -457,12 +416,6 @@ final class GroqDictateAppModel: ObservableObject {
                 try? await Task.sleep(for: .seconds(1))
             }
         }
-    }
-
-    private func endRecordingActivity() async {
-        let activity = recordingActivity
-        recordingActivity = nil
-        await activity?.end(nil, dismissalPolicy: .immediate)
     }
 
     private func process(sessionID: UUID) async {
@@ -525,9 +478,22 @@ final class GroqDictateAppModel: ObservableObject {
             session.state = session.segments.allSatisfy { $0.state == .complete } ? .complete : .failed
             try await store.save(session)
             replace(session)
+            copyTranscriptAutomaticallyIfComplete(session)
         } catch {
             errorMessage = IOSAppStrings.Transcription.audioSafe
         }
+    }
+
+    nonisolated static func automaticClipboardText(for session: RecordingSession) -> String? {
+        guard session.state == .complete,
+              !session.transcript.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        else { return nil }
+        return session.transcript
+    }
+
+    private func copyTranscriptAutomaticallyIfComplete(_ session: RecordingSession) {
+        guard let transcript = Self.automaticClipboardText(for: session) else { return }
+        UIPasteboard.general.string = transcript
     }
 
     private func replace(_ session: RecordingSession) {

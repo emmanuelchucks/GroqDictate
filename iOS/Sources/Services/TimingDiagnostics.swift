@@ -6,7 +6,7 @@ final class TimingDiagnostics: @unchecked Sendable {
     enum Event: String, Codable {
         case launch, active, inactive, background
         case restorationStarted, restorationFinished
-        case recordingStarted, recordingStartFailed, recordingStopped, recordingActivityStarted, recordingActivityFailed
+        case recordingStarted, recordingStartFailed, recordingStopped
         case attemptStarted, responseReceived, attemptSucceeded, attemptFailed, retryScheduled, transactionMetrics
     }
     struct Entry: Codable {

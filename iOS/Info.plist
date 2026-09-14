@@ -24,8 +24,6 @@
     <true/>
     <key>NSMicrophoneUsageDescription</key>
     <string>GroqDictate records your speech so it can preserve and transcribe it.</string>
-    <key>NSSupportsLiveActivities</key>
-    <true/>
     <key>UIApplicationSceneManifest</key>
     <dict>
         <key>UIApplicationSupportsMultipleScenes</key>

@@ -59,10 +59,7 @@ targets:
     platform: iOS
     sources:
       - path: iOS/Sources
-      - path: iOS/Shared
       - path: iOS/Assets.xcassets
-    dependencies:
-      - target: GroqDictateRecordingWidget
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: com.groqdictate.ios
@@ -71,36 +68,10 @@ targets:
         CURRENT_PROJECT_VERSION: "1"
         INFOPLIST_FILE: iOS/Info.plist
         CODE_SIGN_STYLE: Automatic
-        SWIFT_ACTIVE_COMPILATION_CONDITIONS: "$(inherited) GROQDICTATE_APP"
         ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
         ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME: AccentColor
         TARGETED_DEVICE_FAMILY: "1"
         GENERATE_INFOPLIST_FILE: false
-
-  GroqDictateRecordingWidget:
-    type: app-extension
-    platform: iOS
-    deploymentTarget: "18.0"
-    sources:
-      - path: iOS/Widget
-      - path: iOS/Shared
-    info:
-      path: iOS/WidgetInfo.plist
-      properties:
-        CFBundleShortVersionString: "0.1.0"
-        CFBundleVersion: "1"
-        NSExtension:
-          NSExtensionPointIdentifier: com.apple.widgetkit-extension
-    settings:
-      base:
-        PRODUCT_BUNDLE_IDENTIFIER: com.groqdictate.ios.widget
-        DEVELOPMENT_TEAM: G729H95F8U
-        MARKETING_VERSION: "0.1.0"
-        CURRENT_PROJECT_VERSION: "1"
-        CODE_SIGN_STYLE: Automatic
-        SWIFT_VERSION: "5.0"
-        TARGETED_DEVICE_FAMILY: "1"
-        SKIP_INSTALL: YES
 
   GroqDictateIOSTests:
     type: bundle.unit-test
