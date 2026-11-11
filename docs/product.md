@@ -12,6 +12,14 @@ GroqDictate is a focused dictation product for macOS and iPhone. The macOS app s
 6. Apply the user's optional vocabulary hints to every segment and assemble successful segments into one transcript.
 7. Automatically copy a fully completed transcript to the system clipboard while keeping manual copy available.
 
+Decided (Nov 2026):
+
+- While paused, the big button stays Stop (it means the same thing in every state) and Resume is the smaller button.
+- Each finished five-minute part is transcribed while recording continues, so long recordings have most of their text ready at Stop.
+- A part cut off by the app being killed mid-recording must stay recoverable.
+- Audio is never deleted automatically; the user deletes recordings by hand.
+- The app shows nothing while working normally: no spinners, and only a slow transcription (over four seconds) says so. Notices clear themselves.
+
 The iPhone app shares the macOS waveform icon, orange-on-near-black identity, and compact, calm error language. Native iPhone interaction conventions take precedence over visually cloning the macOS panel.
 
 ## macOS core workflow
