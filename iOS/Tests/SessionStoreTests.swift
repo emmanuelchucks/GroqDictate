@@ -1,3 +1,4 @@
+import AVFoundation
 import XCTest
 @testable import GroqDictateIOS
 
@@ -85,19 +86,57 @@ final class SessionStoreTests: XCTestCase {
         XCTAssertEqual(value.state, .complete, "a part that was never recorded doesn't block completion")
     }
 
-    func testRecoveryPreservesRecordedFileAsPending() async throws {
+    func testPartCutOffByAKillIsRecoveredUpToTheCut() async throws {
         var session = try await store.createSession()
-        let segment = RecordingSession.Segment(index: 0, fileName: "segment-0001.m4a")
+        let segment = RecordingSession.Segment(index: 0, fileName: "segment-0001.aac", startedAt: Date(timeIntervalSinceNow: -3600))
         session.segments.append(segment)
         try await store.update(session.id) { [session] stored in stored = session }
         let audioURL = store.audioURL(sessionID: session.id, fileName: segment.fileName)
-        try Data([1, 2, 3]).write(to: audioURL)
+        try Self.writeAAC(seconds: 4, to: audioURL)
+        let full = try Data(contentsOf: audioURL)
+        try full.prefix(full.count / 2).write(to: audioURL)
 
         let recovered = try await store.recoverInterruptedSessions()
         let value = try XCTUnwrap(recovered.first { $0.id == session.id })
+        let part = try XCTUnwrap(value.segments.first)
         XCTAssertEqual(value.state, .failed)
-        XCTAssertEqual(value.segments.first?.state, .pending)
+        XCTAssertEqual(part.state, .pending)
         XCTAssertEqual(value.pendingCount, 1)
+        let seconds = try XCTUnwrap(part.endedAt).timeIntervalSince(part.startedAt)
+        XCTAssertGreaterThan(seconds, 1, "the half before the cut is still readable")
+        XCTAssertLessThan(seconds, 3, "the part ends where its audio does, not at relaunch")
+    }
+
+    func testPartWithNoReadableAudioIsMarkedNotRecorded() async throws {
+        var session = try await store.createSession()
+        let segment = RecordingSession.Segment(index: 0, fileName: "segment-0001.aac")
+        session.segments.append(segment)
+        try await store.update(session.id) { [session] stored in stored = session }
+        try Data([1, 2, 3]).write(to: store.audioURL(sessionID: session.id, fileName: segment.fileName))
+
+        let recovered = try await store.recoverInterruptedSessions()
+        let value = try XCTUnwrap(recovered.first { $0.id == session.id })
+        XCTAssertEqual(value.segments.first?.state, .unavailable)
+        XCTAssertEqual(value.pendingCount, 0)
+    }
+
+    /// Raw AAC (ADTS), like the recorder writes for a `.aac` URL.
+    private static func writeAAC(seconds: Double, to url: URL) throws {
+        let format = try XCTUnwrap(AVAudioFormat(standardFormatWithSampleRate: 16_000, channels: 1))
+        let file = try AVAudioFile(forWriting: url, settings: [
+            AVFormatIDKey: kAudioFormatMPEG4AAC,
+            AVSampleRateKey: 16_000,
+            AVNumberOfChannelsKey: 1,
+            AVEncoderBitRateKey: 32_000
+        ])
+        let frames = AVAudioFrameCount(seconds * 16_000)
+        let buffer = try XCTUnwrap(AVAudioPCMBuffer(pcmFormat: format, frameCapacity: frames))
+        buffer.frameLength = frames
+        let samples = try XCTUnwrap(buffer.floatChannelData?[0])
+        for frame in 0..<Int(frames) {
+            samples[frame] = Float(sin(Double(frame) * 2 * .pi * 440 / 16_000)) * 0.3
+        }
+        try file.write(from: buffer)
     }
 
     func testRecoveryMarksMissingAudioAsNonRetryable() async throws {

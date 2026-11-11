@@ -35,5 +35,6 @@ enum IOSAppStrings {
         static let networkUnavailable = "Check connection"
         static let groqUnavailable = "Groq unavailable"
         static let noSpeechDetected = "No speech detected"
+        static let unreadableAudio = "This part's audio can't be read"
     }
 }

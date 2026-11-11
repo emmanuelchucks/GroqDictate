@@ -112,4 +112,34 @@ final class RecordingLifecycleAndPromptTests: XCTestCase {
         XCTAssertNil(GroqIOSClient.seconds(fromRetryAfter: nil))
         XCTAssertNil(GroqIOSClient.seconds(fromRetryAfter: "soon"))
     }
+
+    func testPromptContinuesFromThePreviousPartAfterTheVocabulary() {
+        XCTAssertEqual(TranscriptionPrompt.make(hints: "", previousText: nil), "")
+        XCTAssertEqual(TranscriptionPrompt.make(hints: "Groq, XcodeGen", previousText: nil), "Groq, XcodeGen")
+        XCTAssertEqual(TranscriptionPrompt.make(hints: "", previousText: " so we ship it. "), "so we ship it.")
+        XCTAssertEqual(
+            TranscriptionPrompt.make(hints: "Groq", previousText: "so we ship it."),
+            "Groq\nso we ship it."
+        )
+    }
+
+    func testPromptKeepsOnlyWholeWordsFromTheEndOfALongPart() {
+        let words = (1...200).map { "word\($0)" }.joined(separator: " ")
+        let prompt = TranscriptionPrompt.make(hints: "", previousText: words)
+
+        XCTAssertLessThanOrEqual(prompt.count, TranscriptionPrompt.previousTextCharacters)
+        XCTAssertTrue(prompt.hasSuffix("word200"))
+        XCTAssertTrue(prompt.hasPrefix("word"), "the tail starts at a word boundary")
+    }
+
+    func testPromptEchoedBackOnASilentPartIsDropped() {
+        let prompt = TranscriptionPrompt.make(hints: "Groq, XcodeGen", previousText: "and that is how we ship the release.")
+
+        XCTAssertEqual(TranscriptionPrompt.removingEcho(of: prompt, from: " and that is how we ship the release. "), "")
+        XCTAssertEqual(TranscriptionPrompt.removingEcho(of: prompt, from: "Groq."), "Groq.", "a short real answer stays")
+        XCTAssertEqual(
+            TranscriptionPrompt.removingEcho(of: prompt, from: "Next we test the new build on the phone."),
+            "Next we test the new build on the phone."
+        )
+    }
 }

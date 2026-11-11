@@ -39,9 +39,12 @@ struct RecordingSession: Codable, Identifiable, Equatable {
             lastError = nil
         }
 
+        /// Parts are raw AAC (ADTS): every frame stands alone, so a part cut
+        /// off by the app being killed is still readable up to the cut. Groq
+        /// doesn't take ADTS, so uploads repackage it as M4A first.
         static func next(in session: RecordingSession) -> Segment {
             let index = session.segments.count
-            return Segment(index: index, fileName: String(format: "segment-%04d.m4a", index + 1))
+            return Segment(index: index, fileName: String(format: "segment-%04d.aac", index + 1))
         }
     }
 

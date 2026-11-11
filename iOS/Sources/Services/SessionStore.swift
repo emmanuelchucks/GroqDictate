@@ -1,3 +1,4 @@
+import AVFoundation
 import Foundation
 
 actor SessionStore {
@@ -95,9 +96,13 @@ actor SessionStore {
 
                 switch segmentState {
                 case .recording:
-                    sessions[sessionIndex].segments[segmentIndex].endedAt = Date()
-                    sessions[sessionIndex].segments[segmentIndex].state = isDefinitelyEmpty ? .unavailable : .pending
-                    sessions[sessionIndex].segments[segmentIndex].lastError = isDefinitelyEmpty ? "This segment was not recorded" : nil
+                    // The app was killed mid-part. The part ends where its audio
+                    // does; without readable audio it was never recorded.
+                    let recorded = isDefinitelyEmpty ? nil : Self.recordedSeconds(fileURL)
+                    let startedAt = sessions[sessionIndex].segments[segmentIndex].startedAt
+                    sessions[sessionIndex].segments[segmentIndex].endedAt = startedAt.addingTimeInterval(recorded ?? 0)
+                    sessions[sessionIndex].segments[segmentIndex].state = recorded == nil ? .unavailable : .pending
+                    sessions[sessionIndex].segments[segmentIndex].lastError = recorded == nil ? "This segment was not recorded" : nil
                     changed = true
                 case .transcribing:
                     sessions[sessionIndex].segments[segmentIndex].state = isDefinitelyEmpty ? .unavailable : .pending
@@ -123,6 +128,12 @@ actor SessionStore {
             if changed { sessions[sessionIndex] = try save(sessions[sessionIndex]) }
         }
         return sessions
+    }
+
+    /// Seconds of readable audio, or nil when there's none.
+    private static func recordedSeconds(_ url: URL) -> TimeInterval? {
+        guard let file = try? AVAudioFile(forReading: url), file.length > 0 else { return nil }
+        return Double(file.length) / file.processingFormat.sampleRate
     }
 
     nonisolated func audioURL(sessionID: UUID, fileName: String) -> URL {

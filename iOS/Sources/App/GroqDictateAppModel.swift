@@ -374,6 +374,9 @@ final class GroqDictateAppModel: ObservableObject {
                 session.segments[index].state = .pending
                 session.segments[index].lastError = nil
             })
+            // The finished part is transcribed while the next one records, so
+            // only the last part is left at Stop.
+            if !apiKey.isEmpty { Task { await process(sessionID: sessionID) } }
         } catch {
             // A persistence failure must not tear down a recorder that is still
             // safely capturing audio, or a pause the interruption path now owns.
@@ -395,6 +398,13 @@ final class GroqDictateAppModel: ObservableObject {
                 session.segments[index].endedAt = endedAt
                 session.segments[index].state = .pending
                 session.segments[index].lastError = nil
+            }
+            // A part that failed while recording continued gets another try
+            // in the pass that runs at Stop.
+            if sessionState == .processing {
+                for index in session.segments.indices where session.segments[index].state == .failed {
+                    session.segments[index].state = .pending
+                }
             }
             session.state = sessionState
         }) else { return }
@@ -495,46 +505,59 @@ final class GroqDictateAppModel: ObservableObject {
         }
 
         do {
-            let queued = try await store.load(sessionID).segments
-                .filter { $0.state == .pending }
-                .sorted { $0.index < $1.index }
-                .map(\.id)
-            for segmentID in queued {
+            // Each round claims the earliest pending part from the latest saved
+            // state, so a part that becomes pending mid-pass (rollover, Stop)
+            // is picked up in the same pass.
+            var rateLimited = false
+            while !rateLimited {
                 let isLive = currentSessionID == sessionID
                 let claimed = try await store.update(sessionID) { session in
-                    guard let index = session.segments.firstIndex(where: { $0.id == segmentID }),
-                          session.segments[index].state == .pending
+                    guard let index = session.segments.indices
+                        .filter({ session.segments[$0].state == .pending })
+                        .min(by: { session.segments[$0].index < session.segments[$1].index })
                     else { return }
                     session.segments[index].state = .transcribing
                     session.segments[index].lastError = nil
                     if !isLive { session.state = .processing }
                 }
                 replace(claimed)
-                guard let segment = claimed.segments.first(where: { $0.id == segmentID }),
-                      segment.state == .transcribing
-                else { continue }
+                guard let segment = claimed.segments.first(where: { $0.state == .transcribing }) else { break }
+                let segmentID = segment.id
+                let prompt = TranscriptionPrompt.make(
+                    hints: vocabularyHints,
+                    previousText: claimed.segments.first { $0.index == segment.index - 1 }?.transcript
+                )
 
                 var text: String?
                 var failure: String?
-                var rateLimited = false
+                var unreadable = false
                 do {
-                    text = try await client.transcribe(
-                        fileURL: store.audioURL(sessionID: sessionID, fileName: segment.fileName),
-                        apiKey: apiKey,
-                        prompt: vocabularyHints,
-                        sessionID: sessionID
+                    text = TranscriptionPrompt.removingEcho(
+                        of: prompt,
+                        from: try await client.transcribe(
+                            fileURL: store.audioURL(sessionID: sessionID, fileName: segment.fileName),
+                            apiKey: apiKey,
+                            prompt: prompt,
+                            sessionID: sessionID
+                        )
                     )
                 } catch {
                     failure = error.localizedDescription
                     if case GroqIOSClient.ClientError.rateLimited = error { rateLimited = true }
+                    if case GroqIOSClient.ClientError.unreadableAudio = error { unreadable = true }
                 }
                 let finishedText = text
                 let finishedFailure = failure
+                let isUnreadable = unreadable
                 replace(try await store.update(sessionID) { session in
                     guard let index = session.segments.firstIndex(where: { $0.id == segmentID }) else { return }
                     if let finishedText {
                         session.segments[index].transcript = finishedText
                         session.segments[index].state = .complete
+                    } else if isUnreadable {
+                        // Retrying can't help a file Groq can't decode.
+                        session.segments[index].state = .unavailable
+                        session.segments[index].lastError = finishedFailure
                     } else {
                         session.segments[index].state = .failed
                         session.segments[index].lastError = finishedFailure
@@ -542,14 +565,18 @@ final class GroqDictateAppModel: ObservableObject {
                     session.transcript = session.assembledTranscript
                 })
                 // The remaining parts would hit the same limit; they stay pending.
-                if rateLimited { break }
             }
 
             // The recorder owns the state of the session it is recording.
             let isLive = currentSessionID == sessionID
+            let stoppedByRateLimit = rateLimited
             let finished = try await store.update(sessionID) { session in
                 guard !isLive else { return }
-                session.state = session.pendingCount > 0 ? .failed : session.finishedState
+                // Parts still pending after a full pass became pending after its
+                // last claim (Stop during a live pass), and the pass Stop asked
+                // for will take them; only a rate limit leaves them waiting.
+                let pending = session.segments.contains { $0.state == .pending }
+                session.state = pending ? (stoppedByRateLimit ? .failed : .processing) : session.finishedState
             }
             replace(finished)
             // Only the recording just stopped goes to the clipboard; a retried

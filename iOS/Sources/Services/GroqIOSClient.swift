@@ -1,3 +1,4 @@
+import AVFoundation
 import Foundation
 
 struct GroqIOSClient {
@@ -7,6 +8,7 @@ struct GroqIOSClient {
         case rateLimited(retryAfter: TimeInterval?)
         case serverUnavailable
         case rejected(String)
+        case unreadableAudio
         case network
 
         var errorDescription: String? {
@@ -16,6 +18,7 @@ struct GroqIOSClient {
             case .rateLimited: return IOSAppStrings.Errors.serviceAtCapacity
             case .serverUnavailable: return IOSAppStrings.Errors.groqUnavailable
             case .rejected(let message): return message.isEmpty ? IOSAppStrings.Errors.requestRejected : message
+            case .unreadableAudio: return IOSAppStrings.Errors.unreadableAudio
             case .network: return IOSAppStrings.Errors.networkUnavailable
             }
         }
@@ -33,7 +36,9 @@ struct GroqIOSClient {
         prompt: String = "",
         sessionID: UUID? = nil
     ) async throws -> String {
-        let size = try fileURL.resourceValues(forKeys: [.fileSizeKey]).fileSize ?? 0
+        let uploadURL = try await Self.uploadableFile(for: fileURL)
+        defer { if uploadURL != fileURL { try? FileManager.default.removeItem(at: uploadURL) } }
+        let size = try uploadURL.resourceValues(forKeys: [.fileSizeKey]).fileSize ?? 0
         guard size <= maximumBytes else { throw ClientError.fileTooLarge }
 
         let requestID = UUID()
@@ -42,7 +47,7 @@ struct GroqIOSClient {
             let started = ProcessInfo.processInfo.systemUptime
             TimingDiagnostics.shared.record(.attemptStarted, requestID: requestID, sessionID: sessionID, attempt: attempt)
             do {
-                let text = try await perform(fileURL: fileURL, apiKey: apiKey, model: model, prompt: prompt,
+                let text = try await perform(fileURL: uploadURL, apiKey: apiKey, model: model, prompt: prompt,
                                              requestID: requestID, sessionID: sessionID, attempt: attempt)
                 TimingDiagnostics.shared.record(.attemptSucceeded, requestID: requestID, sessionID: sessionID,
                                                 attempt: attempt, elapsedSeconds: ProcessInfo.processInfo.systemUptime - started)
@@ -111,6 +116,7 @@ struct GroqIOSClient {
                     retryAfter: Self.seconds(fromRetryAfter: http.value(forHTTPHeaderField: "Retry-After"))
                 )
             case 500...599: throw ClientError.serverUnavailable
+            case 400 where Self.errorCode(from: data) == "invalid_media_file": throw ClientError.unreadableAudio
             default: throw ClientError.rejected(Self.safeMessage(from: data) ?? "Groq rejected this segment")
             }
         }
@@ -132,7 +138,7 @@ struct GroqIOSClient {
             return retryAfter <= longestRateLimitWait ? retryAfter : nil
         case .rateLimited(nil), .serverUnavailable, .network:
             return Self.backoff(attempt: attempt)
-        case .invalidKey, .fileTooLarge, .rejected:
+        case .invalidKey, .fileTooLarge, .rejected, .unreadableAudio:
             return nil
         }
     }
@@ -172,6 +178,32 @@ struct GroqIOSClient {
         body.append(fileData)
         body.append("\r\n--\(boundary)--\r\n")
         return body
+    }
+
+    /// Groq takes M4A but not raw AAC (ADTS), so ADTS parts are rewrapped into
+    /// a temporary M4A. Passthrough copies the audio without re-encoding.
+    private static func uploadableFile(for fileURL: URL) async throws -> URL {
+        guard fileURL.pathExtension == "aac" else { return fileURL }
+        let output = FileManager.default.temporaryDirectory
+            .appendingPathComponent("groqdictate-ios-\(UUID().uuidString).m4a")
+        guard let export = AVAssetExportSession(asset: AVURLAsset(url: fileURL), presetName: AVAssetExportPresetPassthrough)
+        else { throw ClientError.unreadableAudio }
+        export.outputURL = output
+        export.outputFileType = .m4a
+        await export.export()
+        guard export.status == .completed else {
+            try? FileManager.default.removeItem(at: output)
+            throw ClientError.unreadableAudio
+        }
+        return output
+    }
+
+    private static func errorCode(from data: Data) -> String? {
+        struct ErrorResponse: Decodable {
+            struct Detail: Decodable { let code: String? }
+            let error: Detail
+        }
+        return try? JSONDecoder().decode(ErrorResponse.self, from: data).error.code
     }
 
     private static func safeMessage(from data: Data) -> String? {
