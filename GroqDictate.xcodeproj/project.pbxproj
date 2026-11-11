@@ -7,6 +7,7 @@
 	objects = {
 
 /* Begin PBXBuildFile section */
+		0030D4588317E10EC8B746E1 /* SerialRunner.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0E6FC2C23088EF6AA256D064 /* SerialRunner.swift */; };
 		005D51645EE05FF7BA6C2447 /* AudioPreprocessor.swift in Sources */ = {isa = PBXBuildFile; fileRef = 275EC8D422A1F5A479BFDF18 /* AudioPreprocessor.swift */; };
 		052638DD34D768594E2FCBC7 /* FocusTracker.swift in Sources */ = {isa = PBXBuildFile; fileRef = FA1486D8921DABF861D36301 /* FocusTracker.swift */; };
 		0CA859C228689E1BC692EA4B /* AudioCaptureService.swift in Sources */ = {isa = PBXBuildFile; fileRef = BD3423C60FAF9E052C7014FE /* AudioCaptureService.swift */; };
@@ -25,6 +26,7 @@
 		3650FAB8442957390F8FF04F /* IOSAppStrings.swift in Sources */ = {isa = PBXBuildFile; fileRef = D2A140DEAD9739D021979305 /* IOSAppStrings.swift */; };
 		3694D105AD5300E6C64ECCDB /* HotkeyMonitorTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 748C1BBDA2F2194FEBF01EFC /* HotkeyMonitorTests.swift */; };
 		38DC2EC9880712B86F89D656 /* TranscriptionEngine.swift in Sources */ = {isa = PBXBuildFile; fileRef = 78DD936B553E146A6DC9CD76 /* TranscriptionEngine.swift */; };
+		419D49EB7A0C9146DA0A9A97 /* SerialRunnerTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0353A3746920CA6925A48642 /* SerialRunnerTests.swift */; };
 		424D67E43C519FBD44E30990 /* DictationWorkflowCoordinator.swift in Sources */ = {isa = PBXBuildFile; fileRef = ED99481B3CD4AA98D4E53A31 /* DictationWorkflowCoordinator.swift */; };
 		57740BE07224C4B34EEA1900 /* TimingDiagnosticsTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = F383BE09B3E6D1C3029EEEC9 /* TimingDiagnosticsTests.swift */; };
 		598D5D51F04DAEDA88E51BCB /* GroqTranscriptionEngineTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5115F66B76BEDD2652496223 /* GroqTranscriptionEngineTests.swift */; };
@@ -81,8 +83,10 @@
 /* Begin PBXFileReference section */
 		0067FE2374BD2B119ABBC956 /* GroqDictate.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = GroqDictate.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		00DE7481DB590DF65091BA6E /* SetupWindow.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SetupWindow.swift; sourceTree = "<group>"; };
+		0353A3746920CA6925A48642 /* SerialRunnerTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SerialRunnerTests.swift; sourceTree = "<group>"; };
 		05DB0DE76801ADB10FD9D67C /* main.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = main.swift; sourceTree = "<group>"; };
 		0C79A48C3E195CFE84963F29 /* IOSKeychainStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = IOSKeychainStore.swift; sourceTree = "<group>"; };
+		0E6FC2C23088EF6AA256D064 /* SerialRunner.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SerialRunner.swift; sourceTree = "<group>"; };
 		145F3072653C303545EC06CB /* RecordingLifecycleAndPromptTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RecordingLifecycleAndPromptTests.swift; sourceTree = "<group>"; };
 		17D1AC83CCF0FA7EB4F8E6DA /* PermissionService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PermissionService.swift; sourceTree = "<group>"; };
 		1B706011927C316F71EA16F1 /* SetupWindowCoordinatorTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SetupWindowCoordinatorTests.swift; sourceTree = "<group>"; };
@@ -254,6 +258,7 @@
 			isa = PBXGroup;
 			children = (
 				145F3072653C303545EC06CB /* RecordingLifecycleAndPromptTests.swift */,
+				0353A3746920CA6925A48642 /* SerialRunnerTests.swift */,
 				922D9386748E86345E4083BC /* SessionStoreTests.swift */,
 				F383BE09B3E6D1C3029EEEC9 /* TimingDiagnosticsTests.swift */,
 			);
@@ -276,6 +281,7 @@
 			isa = PBXGroup;
 			children = (
 				D2A140DEAD9739D021979305 /* IOSAppStrings.swift */,
+				0E6FC2C23088EF6AA256D064 /* SerialRunner.swift */,
 			);
 			path = Core;
 			sourceTree = "<group>";
@@ -519,6 +525,7 @@
 			buildActionMask = 2147483647;
 			files = (
 				B3CE2A5AE59AD5180BF1B1A3 /* RecordingLifecycleAndPromptTests.swift in Sources */,
+				419D49EB7A0C9146DA0A9A97 /* SerialRunnerTests.swift in Sources */,
 				B393F8135CE951BFE04FCBF8 /* SessionStoreTests.swift in Sources */,
 				57740BE07224C4B34EEA1900 /* TimingDiagnosticsTests.swift in Sources */,
 			);
@@ -537,6 +544,7 @@
 				0E247056637D4C2F2F81008E /* IOSKeychainStore.swift in Sources */,
 				E0076DA83F9D1B9F9BF3BC9B /* RecordingLifecycle.swift in Sources */,
 				990C6E591524ECD25AF8A277 /* RecordingSession.swift in Sources */,
+				0030D4588317E10EC8B746E1 /* SerialRunner.swift in Sources */,
 				88F3233CC909F860FA9EBCE3 /* SessionDetailView.swift in Sources */,
 				A195DEB2BD188E683551861C /* SessionStore.swift in Sources */,
 				D857E58B72C39931AF329C13 /* SettingsView.swift in Sources */,

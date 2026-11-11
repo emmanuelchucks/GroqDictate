@@ -74,4 +74,42 @@ final class RecordingLifecycleAndPromptTests: XCTestCase {
         session.transcript = "  \n"
         XCTAssertNil(GroqDictateAppModel.automaticClipboardText(for: session))
     }
+
+    func testOnlyAPausedRecordingCanStartOneResume() {
+        var lifecycle = RecordingLifecycle.interrupted
+
+        XCTAssertTrue(lifecycle.beginResume())
+        XCTAssertEqual(lifecycle, .resuming)
+        XCTAssertFalse(lifecycle.beginResume(), "a second resume must not start while one is running")
+        XCTAssertTrue(lifecycle.presentsActiveControls)
+        XCTAssertFalse(lifecycle.showsResume)
+        XCTAssertNil(lifecycle.requestToggle())
+
+        for state in [RecordingLifecycle.idle, .starting, .recording, .stopping] {
+            var other = state
+            XCTAssertFalse(other.beginResume())
+            XCTAssertEqual(other, state)
+        }
+    }
+
+    func testSilentPartIsAnEmptyTranscriptNotAnError() throws {
+        XCTAssertEqual(try GroqIOSClient.transcript(from: Data(#"{"text":"  "}"#.utf8)), "")
+        XCTAssertEqual(try GroqIOSClient.transcript(from: Data(#"{"text":" Hello. "}"#.utf8)), "Hello.")
+
+        var session = RecordingSession()
+        for text in ["First.", "", "Third."] {
+            var segment = RecordingSession.Segment.next(in: session)
+            segment.transcript = text
+            segment.state = .complete
+            session.segments.append(segment)
+        }
+        XCTAssertEqual(session.assembledTranscript, "First. Third.")
+    }
+
+    func testRetryAfterIsReadAsSeconds() {
+        XCTAssertEqual(GroqIOSClient.seconds(fromRetryAfter: "7"), 7)
+        XCTAssertEqual(GroqIOSClient.seconds(fromRetryAfter: " 2.5 "), 2.5)
+        XCTAssertNil(GroqIOSClient.seconds(fromRetryAfter: nil))
+        XCTAssertNil(GroqIOSClient.seconds(fromRetryAfter: "soon"))
+    }
 }

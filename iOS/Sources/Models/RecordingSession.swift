@@ -38,6 +38,11 @@ struct RecordingSession: Codable, Identifiable, Equatable {
             transcript = nil
             lastError = nil
         }
+
+        static func next(in session: RecordingSession) -> Segment {
+            let index = session.segments.count
+            return Segment(index: index, fileName: String(format: "segment-%04d.m4a", index + 1))
+        }
     }
 
     let id: UUID
@@ -60,6 +65,20 @@ struct RecordingSession: Codable, Identifiable, Equatable {
         segments.reduce(0) { total, segment in
             total + (segment.endedAt ?? Date()).timeIntervalSince(segment.startedAt)
         }
+    }
+
+    var assembledTranscript: String {
+        segments
+            .sorted { $0.index < $1.index }
+            .compactMap(\.transcript)
+            .filter { !$0.isEmpty }
+            .joined(separator: " ")
+    }
+
+    /// Parts that were never recorded don't stop the rest from completing.
+    var finishedState: State {
+        let recorded = segments.filter { $0.state != .unavailable }
+        return !recorded.isEmpty && recorded.allSatisfy { $0.state == .complete } ? .complete : .failed
     }
 
     var pendingCount: Int {

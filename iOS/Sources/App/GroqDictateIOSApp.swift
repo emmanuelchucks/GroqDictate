@@ -1,4 +1,5 @@
 import SwiftUI
+import UserNotifications
 
 @main
 struct GroqDictateIOSApp: App {
@@ -7,6 +8,7 @@ struct GroqDictateIOSApp: App {
 
     init() {
         TimingDiagnostics.shared.record(.launch)
+        UNUserNotificationCenter.current().delegate = TranscriptNotifications.shared
     }
 
     var body: some Scene {
@@ -21,10 +23,29 @@ struct GroqDictateIOSApp: App {
             case .background: TimingDiagnostics.shared.record(.background)
             @unknown default: break
             }
-            if phase == .active {
+            switch phase {
+            case .active:
                 Task { await model.prepareForVisibleApp() }
-                model.resumeIfNeeded()
+                model.resumeAfterReturningToApp()
+                model.copyTranscriptRefusedInBackground()
+                model.clearTranscriptNotifications()
+            case .background: model.appDidEnterBackground()
+            default: break
             }
         }
+    }
+}
+
+/// iOS asks the app whether to show its own notification while the app
+/// still counts as in front (for a moment after the user switches away),
+/// and shows nothing unless told to.
+final class TranscriptNotifications: NSObject, UNUserNotificationCenterDelegate {
+    static let shared = TranscriptNotifications()
+
+    func userNotificationCenter(
+        _ center: UNUserNotificationCenter,
+        willPresent notification: UNNotification
+    ) async -> UNNotificationPresentationOptions {
+        [.banner, .list, .sound]
     }
 }

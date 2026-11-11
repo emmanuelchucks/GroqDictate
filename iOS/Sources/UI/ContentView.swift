@@ -3,6 +3,7 @@ import SwiftUI
 struct ContentView: View {
     @ObservedObject var model: GroqDictateAppModel
     @State private var showingSettings = false
+    @State private var sessionToDelete: RecordingSession?
 
     var body: some View {
         GeometryReader { geometry in
@@ -23,8 +24,16 @@ struct ContentView: View {
                                 } label: {
                                     SessionRow(
                                         session: session,
-                                        liveDuration: session.id == model.currentSessionID ? model.elapsed : nil
+                                        liveDuration: session.id == model.currentSessionID ? model.elapsed : nil,
+                                        isOnClipboard: model.isOnClipboard(session.id)
                                     )
+                                }
+                                .swipeActions {
+                                    if model.canDelete(session) {
+                                        // Not role: .destructive, which removes the row before the confirmation.
+                                        Button("Delete", systemImage: "trash") { sessionToDelete = session }
+                                            .tint(.red)
+                                    }
                                 }
                             }
                         }
@@ -40,6 +49,21 @@ struct ContentView: View {
                 }
                 .sheet(isPresented: $showingSettings) {
                     SettingsView(model: model)
+                }
+                .confirmationDialog(
+                    IOSAppStrings.Recording.deleteTitle,
+                    isPresented: Binding(
+                        get: { sessionToDelete != nil },
+                        set: { if !$0 { sessionToDelete = nil } }
+                    ),
+                    titleVisibility: .visible,
+                    presenting: sessionToDelete
+                ) { session in
+                    Button(IOSAppStrings.Recording.delete, role: .destructive) {
+                        Task { await model.delete(session.id) }
+                    }
+                } message: { _ in
+                    Text(IOSAppStrings.Recording.deleteMessage)
                 }
                 .alert(model.errorMessage ?? "Something went wrong", isPresented: Binding(
                     get: { model.errorMessage != nil },
@@ -62,52 +86,133 @@ struct ContentView: View {
         VStack(spacing: 18) {
             ZStack {
                 Circle()
-                    .fill(model.isRecording ? Color.red.opacity(0.12) : Color.accentColor.opacity(0.12))
+                    .fill(buttonTint.opacity(model.lifecycle == .interrupted ? 0.07 : 0.12))
                     .frame(width: 150, height: 150)
                 Button {
                     model.toggleRecording()
                 } label: {
-                    Image(systemName: model.presentsActiveControls ? "stop.fill" : "mic.fill")
+                    Image(systemName: showsStop ? "stop.fill" : "mic.fill")
                         .font(.system(size: 48, weight: .semibold))
-                        .foregroundStyle(model.presentsActiveControls ? Color.red : Color.accentColor)
+                        .foregroundStyle(buttonTint)
                         .frame(width: 120, height: 120)
                         .contentShape(Circle())
                 }
                 .buttonStyle(.plain)
-                .accessibilityLabel(model.presentsActiveControls ? "Stop recording" : "Start recording")
+                .accessibilityLabel(showsStop ? "Stop recording" : "Start recording")
             }
 
             VStack(spacing: 5) {
-                Text(statusTitle)
-                    .font(.title3.bold())
-                if model.presentsActiveControls {
-                    Text(model.elapsed.formattedDuration)
-                        .font(.system(.title2, design: .monospaced).weight(.medium))
-                        .foregroundStyle(.secondary)
+                Label {
+                    Text(status.title)
+                } icon: {
+                    if let icon = status.icon {
+                        Image(systemName: icon).foregroundStyle(status.iconColor)
+                    }
                 }
+                .labelStyle(.titleAndIcon)
+                .font(.title3.bold())
+                // Fixed heights keep the card still between states.
+                Text(status.detail ?? " ")
+                    .font(status.detailIsDuration
+                        ? .system(.title2, design: .monospaced).weight(.medium)
+                        : .subheadline)
+                    .foregroundStyle(.secondary)
+                    .lineLimit(1)
+                    .frame(height: 34)
+                    .accessibilityHidden(status.detail == nil)
             }
 
-            if model.showsResume {
-                Button(IOSAppStrings.Recording.resume, systemImage: "mic.fill") {
-                    model.resumeIfNeeded()
-                }
-                .buttonStyle(.borderedProminent)
-            }
+            actionRow
+                .frame(height: 44)
         }
         .frame(maxWidth: .infinity)
         .padding(.vertical, 28)
     }
 
-    private var statusTitle: String {
-        if model.isRecording { return IOSAppStrings.Recording.recording }
-        if model.showsResume { return IOSAppStrings.Recording.pausedSafely }
-        return IOSAppStrings.Recording.ready
+    // A ZStack, not a bare @ViewBuilder: frames on an empty branch take no
+    // space, which made the card move.
+    private var actionRow: some View {
+        ZStack {
+            actionButton
+        }
+    }
+
+    @ViewBuilder
+    private var actionButton: some View {
+        if model.lifecycle.showsResume {
+            // A Label's icon in a List row takes the accent tint, which vanishes
+            // on an accent-filled button, so the icon is coloured explicitly.
+            Button {
+                model.resume()
+            } label: {
+                HStack(spacing: 6) {
+                    Image(systemName: "play.fill")
+                    Text(IOSAppStrings.Recording.resume)
+                }
+                .foregroundStyle(.white)
+            }
+            .buttonStyle(.borderedProminent)
+        } else if let session = model.stoppedSession, session.state == .failed, model.canRetry(session) {
+            Button(IOSAppStrings.Transcription.retry, systemImage: "arrow.clockwise") {
+                model.retry(session.id)
+            }
+            .buttonStyle(.bordered)
+        }
+    }
+
+    private var showsStop: Bool { model.lifecycle.presentsActiveControls }
+
+
+    private var buttonTint: Color { showsStop ? .red : .accentColor }
+
+    private struct Status {
+        var title: String
+        var icon: String?
+        var iconColor: Color = .secondary
+        var detail: String?
+        var detailIsDuration = false
+    }
+
+    private var status: Status {
+        let timer = model.elapsed.formattedDuration
+        switch model.lifecycle {
+        case .recording:
+            return Status(title: IOSAppStrings.Recording.recording, detail: timer, detailIsDuration: true)
+        case .interrupted:
+            return Status(title: IOSAppStrings.Recording.paused, icon: "pause.circle.fill",
+                          iconColor: .orange, detail: timer, detailIsDuration: true)
+        case .resuming:
+            return Status(title: IOSAppStrings.Recording.resuming, detail: timer, detailIsDuration: true)
+        case .starting, .stopping, .idle:
+            break
+        }
+        // A normal transcription takes a second or two and shows nothing;
+        // only a slow one says so.
+        guard let session = model.stoppedSession else { return Status(title: IOSAppStrings.Recording.ready) }
+        let duration = session.duration.formattedDuration
+        switch session.state {
+        case .processing, .recording, .interrupted:
+            guard model.slowSessionID == session.id else { return Status(title: IOSAppStrings.Recording.ready) }
+            return Status(title: IOSAppStrings.Recording.transcribing, detail: duration,
+                          detailIsDuration: true)
+        case .complete where session.transcript.isEmpty:
+            return Status(title: IOSAppStrings.Errors.noSpeechDetected, detail: duration, detailIsDuration: true)
+        case .complete:
+            return Status(title: model.copiedSessionID == session.id ? IOSAppStrings.Recording.copied : IOSAppStrings.Recording.ready,
+                          icon: model.copiedSessionID == session.id ? "checkmark.circle.fill" : nil,
+                          iconColor: .green, detail: duration, detailIsDuration: true)
+        case .failed:
+            let reason = session.segments.first { $0.state == .failed }?.lastError
+            return Status(title: IOSAppStrings.Recording.notTranscribed, icon: "exclamationmark.circle.fill",
+                          iconColor: .orange, detail: reason ?? duration, detailIsDuration: reason == nil)
+        }
     }
 }
 
 private struct SessionRow: View {
     let session: RecordingSession
     let liveDuration: TimeInterval?
+    let isOnClipboard: Bool
 
     var body: some View {
         HStack(spacing: 12) {
@@ -134,7 +239,7 @@ private struct SessionRow: View {
         case .recording: return "Recording"
         case .interrupted: return "Paused safely"
         case .processing: return "Transcribing"
-        case .complete: return session.transcript
+        case .complete: return session.transcript.isEmpty ? IOSAppStrings.Errors.noSpeechDetected : session.transcript
         case .failed:
             if session.pendingCount == 1 { return "1 part ready to retry" }
             if session.pendingCount > 1 { return "\(session.pendingCount) parts ready to retry" }
@@ -146,8 +251,8 @@ private struct SessionRow: View {
         switch session.state {
         case .recording: return "waveform.circle.fill"
         case .interrupted: return "pause.circle.fill"
-        case .processing: return "ellipsis.circle.fill"
-        case .complete: return "waveform"
+        case .processing: return "waveform"
+        case .complete: return isOnClipboard ? "doc.on.clipboard" : "waveform"
         case .failed: return "exclamationmark.circle.fill"
         }
     }
@@ -156,7 +261,7 @@ private struct SessionRow: View {
         switch session.state {
         case .recording: return .red
         case .interrupted: return .orange
-        case .processing: return .blue
+        case .processing: return .secondary
         case .complete: return .secondary
         case .failed: return .orange
         }

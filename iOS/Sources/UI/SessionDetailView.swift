@@ -5,6 +5,8 @@ struct SessionDetailView: View {
     @ObservedObject var model: GroqDictateAppModel
     @State private var audioURLs: [UUID: URL] = [:]
     @State private var copiedTranscript = false
+    @State private var confirmingDelete = false
+    @Environment(\.dismiss) private var dismiss
 
     private var session: RecordingSession? { model.session(id: sessionID) }
 
@@ -62,21 +64,37 @@ struct SessionDetailView: View {
                         }
                     }
 
-                    if session.pendingCount > 0 {
+                    if model.canRetry(session) {
                         Button(IOSAppStrings.Transcription.retry, systemImage: "arrow.clockwise") {
                             model.retry(session.id)
                         }
                     }
                 }
                 .navigationTitle(session.createdAt.formatted(date: .abbreviated, time: .shortened))
+                .toolbar {
+                    if model.canDelete(session) {
+                        ToolbarItem(placement: .topBarTrailing) {
+                            Button(IOSAppStrings.Recording.delete, systemImage: "trash") { confirmingDelete = true }
+                        }
+                    }
+                }
+                .confirmationDialog(
+                    IOSAppStrings.Recording.deleteTitle,
+                    isPresented: $confirmingDelete,
+                    titleVisibility: .visible
+                ) {
+                    Button(IOSAppStrings.Recording.delete, role: .destructive) {
+                        dismiss()
+                        Task { await model.delete(sessionID) }
+                    }
+                } message: {
+                    Text(IOSAppStrings.Recording.deleteMessage)
+                }
                 .task(id: session.updatedAt) {
                     var values: [UUID: URL] = [:]
                     for segment in session.segments where segment.state != .unavailable {
                         guard await model.hasAudio(sessionID: session.id, fileName: segment.fileName) else { continue }
-                        values[segment.id] = await model.audioURL(
-                            sessionID: session.id,
-                            fileName: segment.fileName
-                        )
+                        values[segment.id] = model.audioURL(sessionID: session.id, fileName: segment.fileName)
                     }
                     audioURLs = values
                 }

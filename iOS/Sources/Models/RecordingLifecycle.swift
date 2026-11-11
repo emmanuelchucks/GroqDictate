@@ -11,17 +11,24 @@ enum RecordingLifecycle: Equatable {
     case recording
     case stopping
     case interrupted
+    case resuming
 
     var isCapturing: Bool {
         self == .recording
     }
 
     var presentsActiveControls: Bool {
-        self == .recording || self == .interrupted
+        self == .recording || self == .interrupted || self == .resuming
     }
 
     var showsResume: Bool {
         self == .interrupted
+    }
+
+    mutating func beginResume() -> Bool {
+        guard self == .interrupted else { return false }
+        self = .resuming
+        return true
     }
 
     mutating func requestToggle() -> RecordingLifecycleAction? {
@@ -32,7 +39,7 @@ enum RecordingLifecycle: Equatable {
         case .recording, .interrupted:
             self = .stopping
             return .stop
-        case .starting, .stopping:
+        case .starting, .stopping, .resuming:
             return nil
         }
     }

@@ -1,6 +1,8 @@
 import AVFoundation
+import CallKit
 import Foundation
 import UIKit
+import UserNotifications
 
 @MainActor
 final class GroqDictateAppModel: ObservableObject {
@@ -11,18 +13,26 @@ final class GroqDictateAppModel: ObservableObject {
     @Published private(set) var lifecycle: RecordingLifecycle = .idle
     @Published private(set) var apiKey: String
     @Published private(set) var vocabularyHints: String
+    @Published private(set) var stoppedSessionID: UUID?
+    @Published private(set) var copiedSessionID: UUID?
+    @Published private(set) var slowSessionID: UUID?
+    @Published private var clipboardCopy: ClipboardCopy?
     @Published var errorMessage: String?
 
     private let store: SessionStore
     private let capture = AudioCaptureService()
     private let client = GroqIOSClient()
     private let keychain = IOSKeychainStore()
+    private let callObserver = CXCallObserver()
+    private lazy var processing = SerialRunner<UUID> { [unowned self] sessionID in
+        await performProcessing(sessionID: sessionID)
+    }
     private var activeSegmentID: UUID?
     private var rotationTask: Task<Void, Never>?
     private var elapsedTask: Task<Void, Never>?
-    private var processingTasks: [UUID: Task<Void, Never>] = [:]
-    private var shouldResumeAfterInterruption = false
     private var interruptionFinalizationTask: Task<Void, Never>?
+    private var stopUptimes: [UUID: TimeInterval] = [:]
+    private var uncopiedSessionID: UUID?
     private var hasRestored = false
     private var isRestoring = false
     private let segmentDuration: Duration = .seconds(5 * 60)
@@ -43,17 +53,15 @@ final class GroqDictateAppModel: ObservableObject {
         }
     }
 
-    var isRecording: Bool { lifecycle.isCapturing && capture.isRecording }
-    var presentsActiveControls: Bool { lifecycle.presentsActiveControls }
-    var showsResume: Bool { lifecycle.showsResume }
     var currentSession: RecordingSession? { sessions.first { $0.id == currentSessionID } }
+    var stoppedSession: RecordingSession? { stoppedSessionID.flatMap(session(id:)) }
 
     func session(id: UUID) -> RecordingSession? {
         sessions.first { $0.id == id }
     }
 
-    func audioURL(sessionID: UUID, fileName: String) async -> URL {
-        await store.audioURL(sessionID: sessionID, fileName: fileName)
+    func audioURL(sessionID: UUID, fileName: String) -> URL {
+        store.audioURL(sessionID: sessionID, fileName: fileName)
     }
 
     func hasAudio(sessionID: UUID, fileName: String) async -> Bool {
@@ -88,29 +96,89 @@ final class GroqDictateAppModel: ObservableObject {
         }
     }
 
+    /// Failed parts become pending again only on a retry, so a run that is
+    /// already going doesn't re-upload a part that just failed.
     func retry(_ sessionID: UUID) {
-        Task { await process(sessionID: sessionID) }
+        Task {
+            if let session = try? await store.update(sessionID, { session in
+                for index in session.segments.indices where session.segments[index].state == .failed {
+                    session.segments[index].state = .pending
+                }
+            }) {
+                replace(session)
+            }
+            await process(sessionID: sessionID)
+        }
+    }
+
+    func canRetry(_ session: RecordingSession) -> Bool {
+        session.pendingCount > 0 && session.id != currentSessionID && !processing.isRunning(session.id)
     }
 
     func retryAll() {
-        for session in sessions where session.pendingCount > 0 {
+        for session in sessions where canRetry(session) {
             retry(session.id)
         }
     }
 
     func copyTranscript(_ session: RecordingSession) {
         UIPasteboard.general.string = session.transcript
+        clipboardCopy = ClipboardCopy(sessionID: session.id, changeCount: UIPasteboard.general.changeCount)
     }
 
-    func resumeIfNeeded() {
-        guard lifecycle == .interrupted, currentSessionID != nil, !capture.isRecording else { return }
-        lifecycle = .starting
-        Task { await resumeInterruptedSession() }
+    /// True until anything else is copied; the change count says so without
+    /// reading the pasteboard.
+    func isOnClipboard(_ sessionID: UUID) -> Bool {
+        clipboardCopy?.sessionID == sessionID && clipboardCopy?.changeCount == UIPasteboard.general.changeCount
+    }
+
+    func canDelete(_ session: RecordingSession) -> Bool {
+        session.id != currentSessionID && !processing.isRunning(session.id)
+    }
+
+    func delete(_ sessionID: UUID) async {
+        guard let session = session(id: sessionID), canDelete(session) else { return }
+        do {
+            try await store.delete(sessionID)
+            sessions.removeAll { $0.id == sessionID }
+            if stoppedSessionID == sessionID { stoppedSessionID = nil }
+        } catch {
+            errorMessage = "Couldn't delete the recording"
+        }
+    }
+
+    /// The one way into `.resuming`: the Resume button, iOS's
+    /// interruption-ended notice and returning to the app all come here.
+    func resume(reportsFailure: Bool = true) {
+        guard currentSessionID != nil, lifecycle.beginResume() else { return }
+        Task { await resumeInterruptedSession(reportsFailure: reportsFailure) }
+    }
+
+    /// iOS often sends no interruption-ended notice (alarms, timers), so
+    /// coming back to the app resumes too, but not during a call, which
+    /// keeps the mic; there the Resume button stays.
+    func resumeAfterReturningToApp() {
+        guard callObserver.calls.isEmpty else { return }
+        resume(reportsFailure: false)
+    }
+
+    /// Finishes a copy iOS refused while the app was in the background.
+    func copyTranscriptRefusedInBackground() {
+        guard let sessionID = uncopiedSessionID, let session = session(id: sessionID) else { return }
+        uncopiedSessionID = nil
+        copyTranscriptAutomaticallyIfComplete(session)
     }
 
     func prepareForVisibleApp() async {
         guard UIApplication.shared.applicationState == .active else { return }
         await prepare()
+    }
+
+    func appDidEnterBackground() {
+        if stoppedSession?.state != .processing {
+            stoppedSessionID = nil
+            copiedSessionID = nil
+        }
     }
 
     private func prepare() async {
@@ -139,6 +207,13 @@ final class GroqDictateAppModel: ObservableObject {
     }
 
     private func startSession(requestPermission: Bool = true) async {
+        stoppedSessionID = nil
+        copiedSessionID = nil
+        uncopiedSessionID = nil
+        // Asked here, while the user is looking at the app, without holding
+        // up the recording; the transcript-ready notification is what tells
+        // them the text is ready after they leave.
+        Task { _ = try? await UNUserNotificationCenter.current().requestAuthorization(options: [.alert, .sound]) }
         let granted = requestPermission
             ? await capture.requestPermission()
             : AVAudioApplication.shared.recordPermission == .granted
@@ -148,53 +223,59 @@ final class GroqDictateAppModel: ObservableObject {
             return
         }
 
+        var createdID: UUID?
         do {
-            var session = try await store.createSession()
-            sessions.insert(session, at: 0)
-            try await startSegment(in: &session)
+            let created = try await store.createSession()
+            createdID = created.id
+            let session = try await startSegment(sessionID: created.id, stateIfRefused: .failed)
             currentSessionID = session.id
             lifecycle = .recording
             TimingDiagnostics.shared.record(.recordingStarted, sessionID: session.id)
             replace(session)
             startElapsedAndRotation()
         } catch {
-            TimingDiagnostics.shared.record(
-                .recordingStartFailed,
-                sessionID: currentSessionID,
-                code: (error as NSError).code
-            )
+            TimingDiagnostics.shared.record(.recordingStartFailed, sessionID: createdID, code: Self.diagnosticCode(error))
+            // A session that never recorded has nothing to keep.
+            if let createdID {
+                try? await store.delete(createdID)
+                sessions.removeAll { $0.id == createdID }
+            }
             currentSessionID = nil
             lifecycle = .idle
             errorMessage = error.localizedDescription
         }
     }
 
-    private func startSegment(in session: inout RecordingSession) async throws {
-        let index = session.segments.count
-        let fileName = String(format: "segment-%04d.m4a", index + 1)
-        let segment = RecordingSession.Segment(index: index, fileName: fileName)
-        session.segments.append(segment)
-        session.state = .recording
-        try await store.save(session)
-        let url = await store.audioURL(sessionID: session.id, fileName: fileName)
+    /// Reserves the next segment durably, then starts the recorder into it.
+    /// If the recorder refuses, the reservation is removed again.
+    private func startSegment(
+        sessionID: UUID,
+        stateIfRefused: RecordingSession.State
+    ) async throws -> RecordingSession {
+        let reserved = try await store.update(sessionID) { session in
+            let next = RecordingSession.Segment.next(in: session)
+            session.segments.append(next)
+            session.state = .recording
+        }
+        guard let segment = reserved.segments.last else { throw AudioCaptureService.CaptureError.couldNotStart }
         do {
-            try capture.start(fileURL: url)
-            activeSegmentID = segment.id
-            errorMessage = nil
+            try capture.start(fileURL: store.audioURL(sessionID: sessionID, fileName: segment.fileName))
         } catch {
-            session.segments[index].state = .unavailable
-            session.segments[index].endedAt = Date()
-            session.segments[index].lastError = "This segment was not recorded"
-            session.state = .failed
-            try await store.save(session)
-            replace(session)
+            if let restored = try? await store.update(sessionID, { session in
+                session.segments.removeAll { $0.id == segment.id }
+                session.state = stateIfRefused
+            }) {
+                replace(restored)
+            }
             throw error
         }
+        activeSegmentID = segment.id
+        errorMessage = nil
+        return reserved
     }
 
     private func stopSession() async {
         lifecycle = .stopping
-        shouldResumeAfterInterruption = false
         let pendingRotation = rotationTask
         pendingRotation?.cancel()
         rotationTask = nil
@@ -212,9 +293,11 @@ final class GroqDictateAppModel: ObservableObject {
         }
         capture.stop()
         TimingDiagnostics.shared.record(.recordingStopped, sessionID: sessionID)
-        await finalizeActiveSegment(sessionID: sessionID, interrupted: false)
+        stopUptimes[sessionID] = ProcessInfo.processInfo.systemUptime
+        stoppedSessionID = sessionID
+        markSlowIfStillProcessing(sessionID)
+        await endActiveSegment(sessionID: sessionID, sessionState: .processing)
         currentSessionID = nil
-        activeSegmentID = nil
         elapsed = 0
         lifecycle = .idle
         await process(sessionID: sessionID)
@@ -228,168 +311,143 @@ final class GroqDictateAppModel: ObservableObject {
         else { return }
 
         do {
-            var session = try await store.load(sessionID)
-            guard let previousIndex = session.segments.firstIndex(where: { $0.id == previousSegmentID }) else {
-                return
-            }
-
-            let nextIndex = session.segments.count
-            let fileName = String(format: "segment-%04d.m4a", nextIndex + 1)
-            let nextSegment = RecordingSession.Segment(index: nextIndex, fileName: fileName)
-            session.segments.append(nextSegment)
-            session.state = .recording
-
             // Reserve the next segment durably while the current recorder is
             // still active. No storage await occurs during the recorder swap.
-            try await store.save(session)
-            guard lifecycle == .recording,
-                  currentSessionID == sessionID,
-                  activeSegmentID == previousSegmentID,
-                  capture.isRecording,
-                  !Task.isCancelled
-            else {
-                session.segments.removeAll { $0.id == nextSegment.id }
-                try? await store.save(session)
-                replace(session)
-                return
+            let reserved = try await store.update(sessionID) { session in
+                let next = RecordingSession.Segment.next(in: session)
+                session.segments.append(next)
             }
-
-            let nextURL = await store.audioURL(sessionID: sessionID, fileName: fileName)
+            guard let nextSegment = reserved.segments.last else { return }
+            let removeReservation: @Sendable (inout RecordingSession) -> Void = { session in
+                session.segments.removeAll { $0.id == nextSegment.id }
+            }
             guard lifecycle == .recording,
                   currentSessionID == sessionID,
                   activeSegmentID == previousSegmentID,
                   capture.isRecording,
                   !Task.isCancelled
             else {
-                session.segments.removeAll { $0.id == nextSegment.id }
-                try? await store.save(session)
-                replace(session)
+                replace(try await store.update(sessionID, removeReservation))
                 return
             }
 
             do {
-                try capture.rotate(fileURL: nextURL)
+                try capture.rotate(fileURL: store.audioURL(sessionID: sessionID, fileName: nextSegment.fileName))
             } catch {
                 if capture.isRecording {
                     // Preparation failed before the current recorder stopped.
                     // Roll back only the empty reservation and keep recording.
-                    session.segments.removeAll { $0.id == nextSegment.id }
-                    try? await store.save(session)
-                    replace(session)
+                    replace(try await store.update(sessionID, removeReservation))
                     return
                 }
 
                 let endedAt = Date()
-                session.segments[previousIndex].endedAt = endedAt
-                session.segments[previousIndex].state = .pending
-                if let unavailableIndex = session.segments.firstIndex(where: { $0.id == nextSegment.id }) {
-                    session.segments[unavailableIndex].endedAt = endedAt
-                    session.segments[unavailableIndex].state = .unavailable
-                    session.segments[unavailableIndex].lastError = "This segment was not recorded"
-                }
-                session.state = .failed
-                try? await store.save(session)
-                replace(session)
                 currentSessionID = nil
                 activeSegmentID = nil
                 lifecycle = .idle
                 capture.stop()
                 elapsedTask?.cancel()
+                let failed = try? await store.update(sessionID) { session in
+                    if let index = session.segments.firstIndex(where: { $0.id == previousSegmentID }) {
+                        session.segments[index].endedAt = endedAt
+                        session.segments[index].state = .pending
+                    }
+                    if let index = session.segments.firstIndex(where: { $0.id == nextSegment.id }) {
+                        session.segments[index].endedAt = endedAt
+                        session.segments[index].state = .unavailable
+                        session.segments[index].lastError = "This segment was not recorded"
+                    }
+                    session.state = .processing
+                }
+                if let failed { replace(failed) }
+                errorMessage = IOSAppStrings.Errors.micStopped
+                stoppedSessionID = sessionID
                 await process(sessionID: sessionID)
-                errorMessage = "\(IOSAppStrings.Errors.micError) — completed audio is safe"
                 return
             }
 
             let rotatedAt = Date()
-            session.segments[previousIndex].endedAt = rotatedAt
-            session.segments[previousIndex].state = .pending
-            session.segments[previousIndex].lastError = nil
-            if let activeIndex = session.segments.firstIndex(where: { $0.id == nextSegment.id }) {
-                session.segments[activeIndex].state = .recording
-            }
-            session.state = .recording
             activeSegmentID = nextSegment.id
-            try await store.save(session)
-            replace(session)
+            replace(try await store.update(sessionID) { session in
+                guard let index = session.segments.firstIndex(where: { $0.id == previousSegmentID }) else { return }
+                session.segments[index].endedAt = rotatedAt
+                session.segments[index].state = .pending
+                session.segments[index].lastError = nil
+            })
         } catch {
             // A persistence failure must not tear down a recorder that is still
-            // safely capturing audio in the background.
-            if !capture.isRecording {
+            // safely capturing audio, or a pause the interruption path now owns.
+            if !capture.isRecording, lifecycle == .recording {
                 currentSessionID = nil
                 activeSegmentID = nil
                 lifecycle = .idle
-                errorMessage = "\(IOSAppStrings.Errors.micError) — completed audio is safe"
+                errorMessage = IOSAppStrings.Errors.micStopped
             }
         }
     }
 
-    private func finalizeActiveSegment(sessionID: UUID, interrupted: Bool) async {
-        guard let segmentID = activeSegmentID,
-              var session = try? await store.load(sessionID),
-              let index = session.segments.firstIndex(where: { $0.id == segmentID })
-        else { return }
-
-        session.segments[index].endedAt = Date()
-        session.segments[index].state = .pending
-        session.segments[index].lastError = nil
-        session.state = interrupted ? .interrupted : .processing
-        try? await store.save(session)
-        replace(session)
+    private func endActiveSegment(sessionID: UUID, sessionState: RecordingSession.State) async {
+        let segmentID = activeSegmentID
         activeSegmentID = nil
+        let endedAt = Date()
+        guard let session = try? await store.update(sessionID, { session in
+            if let segmentID, let index = session.segments.firstIndex(where: { $0.id == segmentID }) {
+                session.segments[index].endedAt = endedAt
+                session.segments[index].state = .pending
+                session.segments[index].lastError = nil
+            }
+            session.state = sessionState
+        }) else { return }
+        replace(session)
     }
 
     private func handleInterruption(_ event: AudioCaptureService.InterruptionEvent) {
         switch event {
-        case .began:
-            shouldResumeAfterInterruption = lifecycle == .recording
-            guard shouldResumeAfterInterruption else { return }
+        case .began, .routeLost:
+            guard lifecycle == .recording, let sessionID = currentSessionID else { return }
             lifecycle = .interrupted
+            TimingDiagnostics.shared.record(event == .routeLost ? .routeLost : .interruptionBegan, sessionID: sessionID)
             let pendingRotation = rotationTask
             pendingRotation?.cancel()
             rotationTask = nil
             elapsedTask?.cancel()
-            guard let sessionID = currentSessionID else { return }
             interruptionFinalizationTask = Task { [weak self] in
                 if let pendingRotation {
                     await pendingRotation.value
                 }
                 guard let self,
-                      lifecycle == .interrupted || lifecycle == .starting,
+                      lifecycle == .interrupted || lifecycle == .resuming,
                       currentSessionID == sessionID
                 else { return }
-                await finalizeActiveSegment(sessionID: sessionID, interrupted: true)
+                await endActiveSegment(sessionID: sessionID, sessionState: .interrupted)
+                elapsed = currentSession?.duration ?? elapsed
             }
         case .ended(let shouldResume):
-            guard shouldResumeAfterInterruption else { return }
-            guard shouldResume else {
-                shouldResumeAfterInterruption = false
-                lifecycle = .interrupted
-                return
-            }
-            lifecycle = .starting
-            Task { await resumeInterruptedSession() }
+            guard lifecycle == .interrupted else { return }
+            TimingDiagnostics.shared.record(.interruptionEnded, sessionID: currentSessionID, code: shouldResume ? 1 : 0)
+            if shouldResume { resume() }
         }
     }
 
-    private func resumeInterruptedSession() async {
+    private func resumeInterruptedSession(reportsFailure: Bool) async {
         if let interruptionFinalizationTask {
             await interruptionFinalizationTask.value
             self.interruptionFinalizationTask = nil
         }
-        guard shouldResumeAfterInterruption || lifecycle == .starting,
-              let sessionID = currentSessionID,
-              !capture.isRecording
-        else { return }
+        guard lifecycle == .resuming, let sessionID = currentSessionID else { return }
         do {
-            var session = try await store.load(sessionID)
-            try await startSegment(in: &session)
+            let session = try await startSegment(sessionID: sessionID, stateIfRefused: .interrupted)
             lifecycle = .recording
+            TimingDiagnostics.shared.record(.recordingResumed, sessionID: sessionID)
             replace(session)
-            shouldResumeAfterInterruption = false
             startElapsedAndRotation()
         } catch {
+            TimingDiagnostics.shared.record(.resumeFailed, sessionID: sessionID, code: Self.diagnosticCode(error))
             lifecycle = .interrupted
-            errorMessage = "Audio is safe — tap Resume"
+            guard reportsFailure else { return }
+            errorMessage = (error as? AudioCaptureService.CaptureError)?.isMicrophoneBusy == true
+                ? IOSAppStrings.Recording.resumeMicBusy
+                : IOSAppStrings.Recording.resumeFailed
         }
     }
 
@@ -418,25 +476,18 @@ final class GroqDictateAppModel: ObservableObject {
         }
     }
 
+    /// Asks iOS for time to finish, since the usual next step after Stop is
+    /// leaving the app to paste.
     private func process(sessionID: UUID) async {
-        if let existing = processingTasks[sessionID] {
-            await existing.value
-            return
-        }
-        let task = Task { [weak self] in
-            guard let self else { return }
-            await performProcessing(sessionID: sessionID)
-        }
-        processingTasks[sessionID] = task
-        await task.value
-        processingTasks[sessionID] = nil
+        let backgroundTask = BackgroundTask(name: "Transcription")
+        await processing.run(sessionID)
+        backgroundTask.end()
     }
 
     private func performProcessing(sessionID: UUID) async {
         guard !apiKey.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
-            if var session = try? await store.load(sessionID) {
-                session.state = .failed
-                try? await store.save(session)
+            if currentSessionID != sessionID,
+               let session = try? await store.update(sessionID, { $0.state = .failed }) {
                 replace(session)
             }
             errorMessage = IOSAppStrings.Transcription.pendingKey
@@ -444,41 +495,71 @@ final class GroqDictateAppModel: ObservableObject {
         }
 
         do {
-            var session = try await store.load(sessionID)
-            for index in session.segments.indices
-            where session.segments[index].state == .pending || session.segments[index].state == .failed {
-                session.segments[index].state = .transcribing
-                session.segments[index].lastError = nil
-                session.state = .processing
-                try await store.save(session)
-                replace(session)
+            let queued = try await store.load(sessionID).segments
+                .filter { $0.state == .pending }
+                .sorted { $0.index < $1.index }
+                .map(\.id)
+            for segmentID in queued {
+                let isLive = currentSessionID == sessionID
+                let claimed = try await store.update(sessionID) { session in
+                    guard let index = session.segments.firstIndex(where: { $0.id == segmentID }),
+                          session.segments[index].state == .pending
+                    else { return }
+                    session.segments[index].state = .transcribing
+                    session.segments[index].lastError = nil
+                    if !isLive { session.state = .processing }
+                }
+                replace(claimed)
+                guard let segment = claimed.segments.first(where: { $0.id == segmentID }),
+                      segment.state == .transcribing
+                else { continue }
 
-                let audioURL = await store.audioURL(sessionID: session.id, fileName: session.segments[index].fileName)
+                var text: String?
+                var failure: String?
+                var rateLimited = false
                 do {
-                    let text = try await client.transcribe(
-                        fileURL: audioURL,
+                    text = try await client.transcribe(
+                        fileURL: store.audioURL(sessionID: sessionID, fileName: segment.fileName),
                         apiKey: apiKey,
                         prompt: vocabularyHints,
-                        sessionID: session.id
+                        sessionID: sessionID
                     )
-                    session.segments[index].transcript = text
-                    session.segments[index].state = .complete
                 } catch {
-                    session.segments[index].state = .failed
-                    session.segments[index].lastError = error.localizedDescription
+                    failure = error.localizedDescription
+                    if case GroqIOSClient.ClientError.rateLimited = error { rateLimited = true }
                 }
-                session.transcript = session.segments
-                    .sorted { $0.index < $1.index }
-                    .compactMap(\.transcript)
-                    .joined(separator: " ")
-                try await store.save(session)
-                replace(session)
+                let finishedText = text
+                let finishedFailure = failure
+                replace(try await store.update(sessionID) { session in
+                    guard let index = session.segments.firstIndex(where: { $0.id == segmentID }) else { return }
+                    if let finishedText {
+                        session.segments[index].transcript = finishedText
+                        session.segments[index].state = .complete
+                    } else {
+                        session.segments[index].state = .failed
+                        session.segments[index].lastError = finishedFailure
+                    }
+                    session.transcript = session.assembledTranscript
+                })
+                // The remaining parts would hit the same limit; they stay pending.
+                if rateLimited { break }
             }
 
-            session.state = session.segments.allSatisfy { $0.state == .complete } ? .complete : .failed
-            try await store.save(session)
-            replace(session)
-            copyTranscriptAutomaticallyIfComplete(session)
+            // The recorder owns the state of the session it is recording.
+            let isLive = currentSessionID == sessionID
+            let finished = try await store.update(sessionID) { session in
+                guard !isLive else { return }
+                session.state = session.pendingCount > 0 ? .failed : session.finishedState
+            }
+            replace(finished)
+            // Only the recording just stopped goes to the clipboard; a retried
+            // older one finishing later mustn't replace it.
+            if !isLive, sessionID == stoppedSessionID {
+                copyTranscriptAutomaticallyIfComplete(finished)
+                if finished.state == .complete, finished.transcript.isEmpty { returnCardToIdle(after: sessionID) }
+            }
+        } catch SessionStore.StoreError.sessionNotFound {
+            // Deleted while queued.
         } catch {
             errorMessage = IOSAppStrings.Transcription.audioSafe
         }
@@ -491,17 +572,119 @@ final class GroqDictateAppModel: ObservableObject {
         return session.transcript
     }
 
+    /// The usual flow is Stop, then switch to the app to paste into, so this
+    /// often runs in the background. There an app's haptics don't play, so a
+    /// notification (sound or vibration, plus a banner) says the text is ready.
+    /// iOS may refuse a background pasteboard write; the change count shows
+    /// whether it took, and if not, the copy happens when the app comes back.
     private func copyTranscriptAutomaticallyIfComplete(_ session: RecordingSession) {
         guard let transcript = Self.automaticClipboardText(for: session) else { return }
-        UIPasteboard.general.string = transcript
+        let pasteboard = UIPasteboard.general
+        let previousChangeCount = pasteboard.changeCount
+        pasteboard.string = transcript
+        let copied = pasteboard.changeCount != previousChangeCount
+        let isActive = UIApplication.shared.applicationState == .active
+        if copied {
+            copiedSessionID = session.id
+            clipboardCopy = ClipboardCopy(sessionID: session.id, changeCount: pasteboard.changeCount)
+            returnCardToIdle(after: session.id)
+        } else {
+            uncopiedSessionID = session.id
+        }
+        TimingDiagnostics.shared.record(
+            .transcriptReady,
+            sessionID: session.id,
+            elapsedSeconds: stopUptimes.removeValue(forKey: session.id)
+                .map { ProcessInfo.processInfo.systemUptime - $0 },
+            code: (copied ? 1 : 0) + (isActive ? 0 : 10),
+            audioSeconds: session.duration
+        )
+        if isActive {
+            UINotificationFeedbackGenerator().notificationOccurred(.success)
+        } else {
+            Self.postTranscriptReadyNotification(transcript: transcript, copied: copied)
+        }
     }
 
+    /// Uploads usually finish in one to three seconds (timing log, 8–10 Nov),
+    /// so only a wait past that is worth showing.
+    private func markSlowIfStillProcessing(_ sessionID: UUID) {
+        slowSessionID = nil
+        Task {
+            try? await Task.sleep(for: .seconds(4))
+            if stoppedSessionID == sessionID, session(id: sessionID)?.state == .processing {
+                slowSessionID = sessionID
+            }
+        }
+    }
+
+    /// Results show on the card briefly; the list row keeps the record.
+    private func returnCardToIdle(after sessionID: UUID) {
+        Task {
+            try? await Task.sleep(for: .seconds(3))
+            guard stoppedSessionID == sessionID, lifecycle == .idle else { return }
+            stoppedSessionID = nil
+            copiedSessionID = nil
+        }
+    }
+
+    private static func postTranscriptReadyNotification(transcript: String, copied: Bool) {
+        let content = UNMutableNotificationContent()
+        content.title = copied ? IOSAppStrings.Recording.copied : IOSAppStrings.Transcription.readyTapToCopy
+        content.body = String(transcript.prefix(120))
+        content.sound = .default
+        let center = UNUserNotificationCenter.current()
+        // One identifier, so a new notice replaces the last; and it removes
+        // itself once the banner has shown, so nothing is left to clear.
+        center.add(UNNotificationRequest(identifier: transcriptNotificationID, content: content, trigger: nil))
+        Task { @MainActor in
+            let backgroundTask = BackgroundTask(name: "Clear transcript notice")
+            try? await Task.sleep(for: .seconds(6))
+            center.removeDeliveredNotifications(withIdentifiers: [transcriptNotificationID])
+            backgroundTask.end()
+        }
+    }
+
+    static let transcriptNotificationID = "transcript-ready"
+
+    func clearTranscriptNotifications() {
+        UNUserNotificationCenter.current().removeDeliveredNotifications(withIdentifiers: [Self.transcriptNotificationID])
+    }
+
+    /// Store updates can arrive out of order; the newer saved copy wins.
     private func replace(_ session: RecordingSession) {
         if let index = sessions.firstIndex(where: { $0.id == session.id }) {
+            guard session.updatedAt >= sessions[index].updatedAt else { return }
             sessions[index] = session
         } else {
             sessions.insert(session, at: 0)
         }
         sessions.sort { $0.createdAt > $1.createdAt }
+    }
+
+    private static func diagnosticCode(_ error: Error) -> Int {
+        (error as? AudioCaptureService.CaptureError)?.code ?? (error as NSError).code
+    }
+}
+
+private struct ClipboardCopy {
+    let sessionID: UUID
+    let changeCount: Int
+}
+
+@MainActor
+private final class BackgroundTask {
+    private var identifier = UIBackgroundTaskIdentifier.invalid
+
+    init(name: String) {
+        identifier = UIApplication.shared.beginBackgroundTask(withName: name) { [weak self] in
+            self?.end()
+        }
+    }
+
+    func end() {
+        guard identifier != .invalid else { return }
+        UIApplication.shared.endBackgroundTask(identifier)
+        identifier = .invalid
     }
 }

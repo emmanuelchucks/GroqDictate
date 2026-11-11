@@ -32,15 +32,32 @@ actor SessionStore {
     func createSession() throws -> RecordingSession {
         let session = RecordingSession()
         try fileManager.createDirectory(at: directory(for: session.id), withIntermediateDirectories: true)
-        try save(session)
-        return session
+        return try save(session)
     }
 
-    func save(_ session: RecordingSession) throws {
+    /// Applies `change` to the latest saved copy. Every write goes through
+    /// here so concurrent writers can't overwrite each other's changes.
+    @discardableResult
+    func update(
+        _ id: UUID,
+        _ change: @Sendable (inout RecordingSession) throws -> Void
+    ) throws -> RecordingSession {
+        var session = try load(id)
+        try change(&session)
+        return try save(session)
+    }
+
+    func delete(_ id: UUID) throws {
+        try fileManager.removeItem(at: directory(for: id))
+    }
+
+    @discardableResult
+    private func save(_ session: RecordingSession) throws -> RecordingSession {
         var value = session
         value.updatedAt = Date()
         let data = try encoder.encode(value)
         try data.write(to: manifestURL(for: value.id), options: .atomic)
+        return value
     }
 
     func load(_ id: UUID) throws -> RecordingSession {
@@ -67,7 +84,6 @@ actor SessionStore {
         var sessions = try loadAll()
         for sessionIndex in sessions.indices {
             var changed = false
-            var recoveredUpload = false
             for segmentIndex in sessions[sessionIndex].segments.indices {
                 let segmentState = sessions[sessionIndex].segments[segmentIndex].state
                 let fileURL = audioURL(
@@ -86,7 +102,6 @@ actor SessionStore {
                 case .transcribing:
                     sessions[sessionIndex].segments[segmentIndex].state = isDefinitelyEmpty ? .unavailable : .pending
                     sessions[sessionIndex].segments[segmentIndex].lastError = isDefinitelyEmpty ? "This segment was not recorded" : nil
-                    recoveredUpload = true
                     changed = true
                 case .pending where isDefinitelyEmpty, .failed where isDefinitelyEmpty:
                     sessions[sessionIndex].segments[segmentIndex].state = .unavailable
@@ -96,18 +111,21 @@ actor SessionStore {
                     break
                 }
             }
-            if sessions[sessionIndex].state == .recording {
-                sessions[sessionIndex].state = .interrupted
+            // Nothing records or uploads after a relaunch, so every session's
+            // state follows from its parts.
+            let recoveredState = sessions[sessionIndex].pendingCount > 0
+                ? RecordingSession.State.failed
+                : sessions[sessionIndex].finishedState
+            if sessions[sessionIndex].state != recoveredState {
+                sessions[sessionIndex].state = recoveredState
                 changed = true
-            } else if recoveredUpload || sessions[sessionIndex].segments.contains(where: { $0.state == .unavailable }) {
-                sessions[sessionIndex].state = .failed
             }
-            if changed { try save(sessions[sessionIndex]) }
+            if changed { sessions[sessionIndex] = try save(sessions[sessionIndex]) }
         }
         return sessions
     }
 
-    func audioURL(sessionID: UUID, fileName: String) -> URL {
+    nonisolated func audioURL(sessionID: UUID, fileName: String) -> URL {
         directory(for: sessionID).appendingPathComponent(fileName)
     }
 
@@ -115,7 +133,7 @@ actor SessionStore {
         fileHasContent(audioURL(sessionID: sessionID, fileName: fileName))
     }
 
-    private func directory(for id: UUID) -> URL {
+    private nonisolated func directory(for id: UUID) -> URL {
         rootURL.appendingPathComponent(id.uuidString, isDirectory: true)
     }
 

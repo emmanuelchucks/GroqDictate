@@ -3,19 +3,35 @@ import Foundation
 
 @MainActor
 final class AudioCaptureService: NSObject {
-    enum InterruptionEvent {
+    enum InterruptionEvent: Equatable {
         case began
+        case routeLost
         case ended(shouldResume: Bool)
     }
 
     enum CaptureError: LocalizedError {
         case permissionDenied
+        case couldNotActivate(code: Int)
         case couldNotStart
+
+        var code: Int? {
+            if case .couldNotActivate(let code) = self { return code }
+            return nil
+        }
+
+        /// iOS refuses the mic while a call or another higher-priority app holds
+        /// it; after a call ends in the background it can also say it can't
+        /// start recording (developer.apple.com/forums/thread/120038).
+        var isMicrophoneBusy: Bool {
+            guard let code, let reason = AVAudioSession.ErrorCode(rawValue: code) else { return false }
+            return [.insufficientPriority, .cannotInterruptOthers, .cannotStartRecording].contains(reason)
+        }
 
         var errorDescription: String? {
             switch self {
             case .permissionDenied: return "Microphone access is required"
-            case .couldNotStart: return "Recording could not start"
+            case .couldNotActivate where isMicrophoneBusy: return "The mic is in use, for example by a call"
+            case .couldNotActivate, .couldNotStart: return "Recording could not start"
             }
         }
     }
@@ -75,8 +91,13 @@ final class AudioCaptureService: NSObject {
         )
         try? audioSession.setPrefersNoInterruptionsFromSystemAlerts(true)
 
-        // AVAudioRecorder activates the configured recording session when
-        // record() begins; explicit activation is unnecessary here.
+        // record() would activate the session too, but only reports a Bool;
+        // activating here surfaces iOS's reason when it refuses.
+        do {
+            try audioSession.setActive(true)
+        } catch {
+            throw CaptureError.couldNotActivate(code: (error as NSError).code)
+        }
         let recorder = try makeRecorder(fileURL: fileURL)
         guard recorder.record() else { throw CaptureError.couldNotStart }
         self.recorder = recorder
@@ -150,6 +171,6 @@ final class AudioCaptureService: NSObject {
               AVAudioSession.RouteChangeReason(rawValue: rawReason) == .oldDeviceUnavailable
         else { return }
         stop()
-        onInterruption?(.began)
+        onInterruption?(.routeLost)
     }
 }

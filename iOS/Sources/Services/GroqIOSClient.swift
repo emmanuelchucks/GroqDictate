@@ -4,10 +4,9 @@ struct GroqIOSClient {
     enum ClientError: LocalizedError {
         case invalidKey
         case fileTooLarge
-        case rateLimited
+        case rateLimited(retryAfter: TimeInterval?)
         case serverUnavailable
         case rejected(String)
-        case emptyTranscript
         case network
 
         var errorDescription: String? {
@@ -17,7 +16,6 @@ struct GroqIOSClient {
             case .rateLimited: return IOSAppStrings.Errors.serviceAtCapacity
             case .serverUnavailable: return IOSAppStrings.Errors.groqUnavailable
             case .rejected(let message): return message.isEmpty ? IOSAppStrings.Errors.requestRejected : message
-            case .emptyTranscript: return IOSAppStrings.Errors.noSpeechDetected
             case .network: return IOSAppStrings.Errors.networkUnavailable
             }
         }
@@ -25,6 +23,8 @@ struct GroqIOSClient {
 
     private let endpoint = URL(string: "https://api.groq.com/openai/v1/audio/transcriptions")!
     private let maximumBytes = 24 * 1024 * 1024
+    private let longestRateLimitWait: TimeInterval = 20
+    private let session = URLSession(configuration: .default)
 
     func transcribe(
         fileURL: URL,
@@ -51,7 +51,10 @@ struct GroqIOSClient {
                 TimingDiagnostics.shared.record(.attemptFailed, requestID: requestID, sessionID: sessionID,
                                                 attempt: attempt, elapsedSeconds: ProcessInfo.processInfo.systemUptime - started)
                 lastError = error
-                guard attempt < 3, error.isRetryable else { throw error }
+                guard attempt < 3, let delay = retryDelay(after: error, attempt: attempt) else { throw error }
+                TimingDiagnostics.shared.record(.retryScheduled, requestID: requestID, sessionID: sessionID,
+                                                attempt: attempt, elapsedSeconds: delay)
+                try await Task.sleep(for: .seconds(delay))
             } catch {
                 // Only URL error codes; never serialize NSError userInfo or descriptions.
                 let code = (error as? URLError)?.code.rawValue
@@ -59,9 +62,14 @@ struct GroqIOSClient {
                                                 attempt: attempt, elapsedSeconds: ProcessInfo.processInfo.systemUptime - started, code: code)
                 lastError = ClientError.network
                 guard attempt < 3 else { throw ClientError.network }
+                // A transport failure may leave a stalled connection in the pool;
+                // flush makes the retry open a new one.
+                await session.flush()
+                let delay = Self.backoff(attempt: attempt)
+                TimingDiagnostics.shared.record(.retryScheduled, requestID: requestID, sessionID: sessionID,
+                                                attempt: attempt, elapsedSeconds: delay)
+                try await Task.sleep(for: .seconds(delay))
             }
-            TimingDiagnostics.shared.record(.retryScheduled, requestID: requestID, sessionID: sessionID, attempt: attempt)
-            try await Task.sleep(for: .seconds(attempt == 1 ? 1 : 3))
         }
         throw lastError
     }
@@ -87,12 +95,9 @@ struct GroqIOSClient {
         request.setValue("Bearer \(apiKey)", forHTTPHeaderField: "Authorization")
         request.setValue("multipart/form-data; boundary=\(boundary)", forHTTPHeaderField: "Content-Type")
 
-        // Isolate each attempt so a stalled connection is never reused by a retry.
-        let uploadSession = URLSession(configuration: URLSession.shared.configuration)
-        defer { uploadSession.finishTasksAndInvalidate() }
         let uploadStarted = ProcessInfo.processInfo.systemUptime
         let observer = UploadMetricsDelegate(requestID: requestID, sessionID: sessionID, attempt: attempt)
-        let (data, response) = try await uploadSession.upload(for: request, fromFile: bodyURL, delegate: observer)
+        let (data, response) = try await session.upload(for: request, fromFile: bodyURL, delegate: observer)
         TimingDiagnostics.shared.record(.responseReceived, requestID: requestID, sessionID: sessionID,
                                         attempt: attempt, elapsedSeconds: ProcessInfo.processInfo.systemUptime - uploadStarted,
                                         code: (response as? HTTPURLResponse)?.statusCode)
@@ -101,17 +106,45 @@ struct GroqIOSClient {
             switch http.statusCode {
             case 401, 403: throw ClientError.invalidKey
             case 413: throw ClientError.fileTooLarge
-            case 429: throw ClientError.rateLimited
+            case 429:
+                throw ClientError.rateLimited(
+                    retryAfter: Self.seconds(fromRetryAfter: http.value(forHTTPHeaderField: "Retry-After"))
+                )
             case 500...599: throw ClientError.serverUnavailable
             default: throw ClientError.rejected(Self.safeMessage(from: data) ?? "Groq rejected this segment")
             }
         }
 
+        return try Self.transcript(from: data)
+    }
+
+    /// Silence comes back as empty text, which is a finished part with no words.
+    static func transcript(from data: Data) throws -> String {
         struct Response: Decodable { let text: String }
-        let text = try JSONDecoder().decode(Response.self, from: data).text
+        return try JSONDecoder().decode(Response.self, from: data).text
             .trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !text.isEmpty else { throw ClientError.emptyTranscript }
-        return text
+    }
+
+    /// `nil` means don't retry automatically; the part stays retryable by hand.
+    private func retryDelay(after error: ClientError, attempt: Int) -> TimeInterval? {
+        switch error {
+        case .rateLimited(let retryAfter?):
+            return retryAfter <= longestRateLimitWait ? retryAfter : nil
+        case .rateLimited(nil), .serverUnavailable, .network:
+            return Self.backoff(attempt: attempt)
+        case .invalidKey, .fileTooLarge, .rejected:
+            return nil
+        }
+    }
+
+    private static func backoff(attempt: Int) -> TimeInterval {
+        attempt == 1 ? 1 : 3
+    }
+
+    /// Groq sends Retry-After as seconds (console.groq.com/docs/rate-limits).
+    static func seconds(fromRetryAfter value: String?) -> TimeInterval? {
+        guard let value, let seconds = TimeInterval(value.trimmingCharacters(in: .whitespaces)) else { return nil }
+        return max(0, seconds)
     }
 
     static func makeMultipartBody(
@@ -148,15 +181,6 @@ struct GroqIOSClient {
         }
         guard let message = try? JSONDecoder().decode(ErrorResponse.self, from: data).error.message else { return nil }
         return String(message.replacingOccurrences(of: "\n", with: " ").prefix(100))
-    }
-}
-
-private extension GroqIOSClient.ClientError {
-    var isRetryable: Bool {
-        switch self {
-        case .rateLimited, .serverUnavailable, .network: return true
-        default: return false
-        }
     }
 }
 

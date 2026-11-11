@@ -4,19 +4,29 @@ enum IOSAppStrings {
     enum Recording {
         static let ready = "Ready"
         static let recording = "Recording"
-        static let pausedSafely = "Paused — audio safe"
+        static let paused = "Paused"
         static let resume = "Resume"
+        static let resuming = "Resuming…"
+        static let resumeMicBusy = "The mic is in use, maybe by a call. Tap Resume when it's free."
+        static let resumeFailed = "Couldn't resume. Recording so far is saved."
+        static let transcribing = "Still transcribing…"
+        static let copied = "Copied"
+        static let notTranscribed = "Not transcribed"
+        static let delete = "Delete"
+        static let deleteTitle = "Delete this recording?"
+        static let deleteMessage = "Its audio and transcript are removed from this iPhone."
     }
 
     enum Transcription {
-        static let pendingKey = "Add your Groq API key — audio remains pending"
-        static let audioSafe = "Transcription stopped — audio is safe"
+        static let pendingKey = "Add a Groq API key to transcribe"
+        static let audioSafe = "Transcription stopped. Audio saved."
         static let retry = "Retry transcription"
+        static let readyTapToCopy = "Tap to copy"
     }
 
     enum Errors {
         static let micDenied = "Mic access denied"
-        static let micError = "Mic error"
+        static let micStopped = "Microphone stopped. Recording so far is saved."
         static let invalidKey = "Invalid API key"
         static let recordingTooLarge = "Recording too large"
         static let requestRejected = "Request rejected"

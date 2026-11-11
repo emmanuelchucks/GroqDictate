@@ -7,6 +7,8 @@ final class TimingDiagnostics: @unchecked Sendable {
         case launch, active, inactive, background
         case restorationStarted, restorationFinished
         case recordingStarted, recordingStartFailed, recordingStopped
+        case interruptionBegan, routeLost, interruptionEnded, recordingResumed, resumeFailed
+        case transcriptReady
         case attemptStarted, responseReceived, attemptSucceeded, attemptFailed, retryScheduled, transactionMetrics
     }
     struct Entry: Codable {
@@ -17,6 +19,7 @@ final class TimingDiagnostics: @unchecked Sendable {
         let attempt: Int?
         let elapsedSeconds: Double?
         let code: Int?
+        let audioSeconds: Double?
         let transaction: UploadMetricsDelegate.Transaction?
     }
 
@@ -31,9 +34,10 @@ final class TimingDiagnostics: @unchecked Sendable {
 
     func record(_ event: Event, requestID: UUID? = nil, sessionID: UUID? = nil,
                 attempt: Int? = nil, elapsedSeconds: Double? = nil, code: Int? = nil,
-                transaction: UploadMetricsDelegate.Transaction? = nil) {
+                audioSeconds: Double? = nil, transaction: UploadMetricsDelegate.Transaction? = nil) {
         let entry = Entry(timestamp: Date(), event: event, requestID: requestID,
-                          sessionID: sessionID, attempt: attempt, elapsedSeconds: elapsedSeconds, code: code, transaction: transaction)
+                          sessionID: sessionID, attempt: attempt, elapsedSeconds: elapsedSeconds, code: code,
+                          audioSeconds: audioSeconds, transaction: transaction)
         queue.async { self.append(entry) }
     }
 
