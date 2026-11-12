@@ -24,6 +24,7 @@ struct ContentView: View {
                                 } label: {
                                     SessionRow(
                                         session: session,
+                                        text: model.text(of: session),
                                         liveDuration: session.id == model.currentSessionID ? model.elapsed : nil,
                                         isOnClipboard: model.isOnClipboard(session.id)
                                     )
@@ -211,6 +212,7 @@ struct ContentView: View {
 
 private struct SessionRow: View {
     let session: RecordingSession
+    let text: String
     let liveDuration: TimeInterval?
     let isOnClipboard: Bool
 
@@ -239,7 +241,7 @@ private struct SessionRow: View {
         case .recording: return "Recording"
         case .interrupted: return "Paused safely"
         case .processing: return "Transcribing"
-        case .complete: return session.transcript.isEmpty ? IOSAppStrings.Errors.noSpeechDetected : session.transcript
+        case .complete: return text.isEmpty ? IOSAppStrings.Errors.noSpeechDetected : text
         case .failed:
             if session.pendingCount == 1 { return "1 part ready to retry" }
             if session.pendingCount > 1 { return "\(session.pendingCount) parts ready to retry" }

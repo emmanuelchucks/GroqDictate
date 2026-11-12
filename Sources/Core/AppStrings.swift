@@ -12,6 +12,7 @@ enum AppStrings {
         static let about = "About GroqDictate"
         static let launchAtLogin = "Launch at Login"
         static let settings = "Settings…"
+        static let copyOriginal = "Copy Original Transcript"
         static let quit = "Quit GroqDictate"
     }
 
@@ -53,6 +54,8 @@ enum AppStrings {
         static let modelLabel = "Model"
         static let micLabel = "Microphone"
         static let inputGainLabel = "Input Gain"
+        static let spellingFixesLabel = "Spelling Fixes"
+        static let spellingFixesHint = "One name per line: right spelling, colon, wrong spellings. Groq: grog, grok"
         static let keyHint = "Free from console.groq.com → Stored in Keychain."
         static let done = "Done"
         static let systemDefaultMic = "System Default"

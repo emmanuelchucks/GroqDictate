@@ -3,7 +3,7 @@ import Cocoa
 final class SetupWindow: NSWindow, NSWindowDelegate {
     private static let systemDefaultMicToken = "__system_default__"
     private static let contentWidth: CGFloat = 460
-    private static let contentHeight: CGFloat = 360
+    private static let contentHeight: CGFloat = 500
 
     private let configurationController: SetupConfigurationController
     private let initialState: SetupConfigurationState
@@ -12,6 +12,8 @@ final class SetupWindow: NSWindow, NSWindowDelegate {
     private let modelPopup = NSPopUpButton()
     private let gainSlider = NSSlider()
     private let gainLabel = NSTextField(labelWithString: "2.0x")
+    private let spellingFixesScroll = NSTextView.scrollableTextView()
+    private var spellingFixesView: NSTextView { spellingFixesScroll.documentView as! NSTextView }
     private let statusLabel = NSTextField(labelWithString: "")
     private var doneButton: NSButton?
 
@@ -110,6 +112,20 @@ final class SetupWindow: NSWindow, NSWindowDelegate {
         footerRow.alignment = .centerY
         footerRow.spacing = 12
 
+        spellingFixesView.font = .systemFont(ofSize: 12)
+        spellingFixesView.string = initialState.spellingFixes
+        spellingFixesView.isRichText = false
+        spellingFixesView.isAutomaticSpellingCorrectionEnabled = false
+        spellingFixesView.isAutomaticTextReplacementEnabled = false
+        spellingFixesView.isAutomaticQuoteSubstitutionEnabled = false
+        spellingFixesView.textContainerInset = NSSize(width: 4, height: 4)
+        spellingFixesScroll.borderType = .bezelBorder
+        spellingFixesScroll.heightAnchor.constraint(equalToConstant: 96).isActive = true
+
+        let spellingFixesHint = NSTextField(labelWithString: AppStrings.Setup.spellingFixesHint)
+        spellingFixesHint.font = .systemFont(ofSize: 10)
+        spellingFixesHint.textColor = .tertiaryLabelColor
+
         let filler = NSView()
         filler.setContentHuggingPriority(.defaultLow, for: .vertical)
         filler.setContentCompressionResistancePriority(.defaultLow, for: .vertical)
@@ -122,6 +138,7 @@ final class SetupWindow: NSWindow, NSWindowDelegate {
             makeSection(title: AppStrings.Setup.modelLabel, views: [modelPopup]),
             makeSection(title: AppStrings.Setup.micLabel, views: [micPopup]),
             makeSection(title: AppStrings.Setup.inputGainLabel, views: [gainRow]),
+            makeSection(title: AppStrings.Setup.spellingFixesLabel, views: [spellingFixesScroll, spellingFixesHint]),
             filler,
             footerRow
         ])
@@ -174,7 +191,8 @@ final class SetupWindow: NSWindow, NSWindowDelegate {
             selectedMicrophoneID: (micPopup.selectedItem?.representedObject as? String).flatMap {
                 $0 == Self.systemDefaultMicToken ? nil : $0
             },
-            inputGain: Float(gainSlider.doubleValue)
+            inputGain: Float(gainSlider.doubleValue),
+            spellingFixes: spellingFixesView.string
         )
 
         isSaving = true

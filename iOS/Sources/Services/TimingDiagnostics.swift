@@ -9,6 +9,7 @@ final class TimingDiagnostics: @unchecked Sendable {
         case recordingStarted, recordingStartFailed, recordingStopped
         case interruptionBegan, routeLost, interruptionEnded, recordingResumed, resumeFailed
         case transcriptReady
+        case speechChecked
         case attemptStarted, responseReceived, attemptSucceeded, attemptFailed, retryScheduled, transactionMetrics
     }
     struct Entry: Codable {

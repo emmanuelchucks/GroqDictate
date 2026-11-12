@@ -9,7 +9,7 @@ GroqDictate is a focused dictation product for macOS and iPhone. The macOS app s
 3. Finalize the current segment when calls, alarms, or route changes interrupt capture.
 4. Transcribe each completed segment with bounded automatic retries.
 5. Keep retryable uploads pending, distinguish segments that were never recorded, and keep every existing audio file available to share.
-6. Apply the user's optional vocabulary hints to every segment and assemble successful segments into one transcript.
+6. Remove phantom phrases Whisper writes over silence, keep Groq's original text beside the cleaned text, and assemble successful segments into one transcript with the user's spelling fixes applied.
 7. Automatically copy a fully completed transcript to the system clipboard while keeping manual copy available.
 
 Decided (Nov 2026):
@@ -85,4 +85,5 @@ Out of scope unless explicitly reprioritized:
 - Do not keep the Distil Whisper option in the normal app.
 - Send `language = en` by default for better English dictation accuracy and latency.
 - Keep `temperature = 0`; Groq recommends the default `0` for transcription/translation, and predictable dictation is the desired behavior.
-- Do not expose prompt/vocabulary support unless it can be done as a simple visible setting with honest validation. Do not add hidden prompt settings.
+- Names are corrected after transcription with the user's visible "Spelling fixes" list, not with Whisper's prompt: a vocabulary prompt made Whisper drop or invent clauses. The iPhone's only prompt is the end of the previous five-minute part.
+- Phantom phrases are removed from the text, never by cutting audio, and only where the built-in sound classifier hears no voice (`docs/transcript-cleanup.md`).

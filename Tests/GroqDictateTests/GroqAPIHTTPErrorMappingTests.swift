@@ -38,7 +38,7 @@ final class GroqAPIHTTPErrorMappingTests: XCTestCase {
         """.utf8)
 
         XCTAssertEqual(
-            GroqAPI.extractTranscription(from: payload),
+            GroqAPI.extractTranscription(from: payload)?.text,
             "first words after a pause should stay"
         )
     }
@@ -54,7 +54,7 @@ final class GroqAPIHTTPErrorMappingTests: XCTestCase {
         """.utf8)
 
         XCTAssertEqual(
-            GroqAPI.extractTranscription(from: payload),
+            GroqAPI.extractTranscription(from: payload)?.text,
             "first words after a pause should stay"
         )
     }

@@ -12,6 +12,7 @@ struct SetupConfigurationState: Equatable {
     let microphoneOptions: [MicrophoneOption]
     let selectedMicrophoneID: String?
     let inputGain: Float
+    var spellingFixes: String = ""
 }
 
 struct SetupSaveRequest: Equatable {
@@ -19,6 +20,7 @@ struct SetupSaveRequest: Equatable {
     let selectedModelID: String
     let selectedMicrophoneID: String?
     let inputGain: Float
+    var spellingFixes: String = ""
 }
 
 enum SetupSaveError: Error, Equatable {
@@ -41,6 +43,8 @@ final class SetupConfigurationController {
     private let loadInputDevices: () -> [AudioDevice]
     private let saveAPIKey: (String) throws -> Void
     private let savePreferences: (String, String?, Float) -> Void
+    private let loadSpellingFixes: () -> String
+    private let saveSpellingFixes: (String) -> Void
     private let validateRemotely: RemoteValidation
 
     convenience init() {
@@ -60,6 +64,8 @@ final class SetupConfigurationController {
             loadInputDevices: AudioRecorder.availableInputDevices,
             saveAPIKey: Config.saveAPIKey,
             savePreferences: Config.savePreferences,
+            loadSpellingFixes: Config.loadSpellingFixes,
+            saveSpellingFixes: Config.saveSpellingFixes,
             validateRemotely: GroqModelValidator.validate
         )
     }
@@ -72,6 +78,8 @@ final class SetupConfigurationController {
         loadInputDevices: @escaping () -> [AudioDevice],
         saveAPIKey: @escaping (String) throws -> Void,
         savePreferences: @escaping (String, String?, Float) -> Void,
+        loadSpellingFixes: @escaping () -> String = { "" },
+        saveSpellingFixes: @escaping (String) -> Void = { _ in },
         validateRemotely: @escaping RemoteValidation = { _, _, completion in completion(.networkUnavailable) }
     ) {
         self.loadAPIKey = loadAPIKey
@@ -81,6 +89,8 @@ final class SetupConfigurationController {
         self.loadInputDevices = loadInputDevices
         self.saveAPIKey = saveAPIKey
         self.savePreferences = savePreferences
+        self.loadSpellingFixes = loadSpellingFixes
+        self.saveSpellingFixes = saveSpellingFixes
         self.validateRemotely = validateRemotely
     }
 
@@ -101,7 +111,8 @@ final class SetupConfigurationController {
             modelOptions: modelOptions,
             microphoneOptions: microphoneOptions,
             selectedMicrophoneID: selectedMicrophoneID,
-            inputGain: inputGain
+            inputGain: inputGain,
+            spellingFixes: loadSpellingFixes()
         )
     }
 
@@ -125,7 +136,11 @@ final class SetupConfigurationController {
             options: state.microphoneOptions
         )
 
-        validateRemotely(key, selectedModelID) { [saveAPIKey, savePreferences] validationResult in
+        let spellingFixes = String(
+            request.spellingFixes.trimmingCharacters(in: .whitespacesAndNewlines).prefix(SpellingFixes.maximumCharacters)
+        )
+
+        validateRemotely(key, selectedModelID) { [saveAPIKey, savePreferences, saveSpellingFixes] validationResult in
             AppLog.metric(
                 "setup_validation",
                 category: .app,
@@ -142,6 +157,7 @@ final class SetupConfigurationController {
                 do {
                     try saveAPIKey(key)
                     savePreferences(selectedModelID, selectedMicrophoneID, request.inputGain)
+                    saveSpellingFixes(spellingFixes)
                     AppLog.metric(
                         "setup_save",
                         category: .app,

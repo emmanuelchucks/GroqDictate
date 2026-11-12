@@ -4,13 +4,13 @@ struct SettingsView: View {
     @ObservedObject var model: GroqDictateAppModel
     @Environment(\.dismiss) private var dismiss
     @State private var draftAPIKey: String
-    @State private var draftVocabularyHints: String
+    @State private var draftSpellingFixes: String
     @State private var saveError: String?
 
     init(model: GroqDictateAppModel) {
         self.model = model
         _draftAPIKey = State(initialValue: model.apiKey)
-        _draftVocabularyHints = State(initialValue: model.vocabularyHints)
+        _draftSpellingFixes = State(initialValue: model.spellingFixesText)
     }
 
     var body: some View {
@@ -25,21 +25,22 @@ struct SettingsView: View {
                         .foregroundStyle(.secondary)
                 }
 
-                Section("Vocabulary hints") {
+                Section("Spelling fixes") {
                     TextField(
-                        "Groq, GroqDictate, XcodeGen, MCP",
-                        text: $draftVocabularyHints,
+                        "Groq: grog, grok",
+                        text: $draftSpellingFixes,
                         axis: .vertical
                     )
-                    .lineLimit(3...6)
+                    .lineLimit(3...12)
+                    .textInputAutocapitalization(.never)
                     .autocorrectionDisabled()
-                    .onChange(of: draftVocabularyHints) { _, value in
-                        if value.count > TranscriptionVocabulary.maximumCharacters {
-                            draftVocabularyHints = String(value.prefix(TranscriptionVocabulary.maximumCharacters))
+                    .onChange(of: draftSpellingFixes) { _, value in
+                        if value.count > SpellingFixes.maximumCharacters {
+                            draftSpellingFixes = String(value.prefix(SpellingFixes.maximumCharacters))
                         }
                     }
 
-                    Text("Names, acronyms, and terms that are often misheard. Up to 500 characters.")
+                    Text("One name per line: the right spelling, a colon, then how it comes out wrong, separated by commas.")
                         .font(.footnote)
                         .foregroundStyle(.secondary)
                 }
@@ -53,7 +54,7 @@ struct SettingsView: View {
                     Button("Save") {
                         saveError = model.saveSettings(
                             apiKey: draftAPIKey,
-                            vocabularyHints: draftVocabularyHints
+                            spellingFixes: draftSpellingFixes
                         )
                         if saveError == nil { dismiss() }
                     }
@@ -73,6 +74,6 @@ struct SettingsView: View {
 
     private var hasChanges: Bool {
         draftAPIKey.trimmingCharacters(in: .whitespacesAndNewlines) != model.apiKey
-            || TranscriptionVocabulary.normalized(draftVocabularyHints) != model.vocabularyHints
+            || draftSpellingFixes.trimmingCharacters(in: .whitespacesAndNewlines) != model.spellingFixesText
     }
 }

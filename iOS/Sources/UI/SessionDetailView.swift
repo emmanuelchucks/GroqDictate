@@ -5,6 +5,7 @@ struct SessionDetailView: View {
     @ObservedObject var model: GroqDictateAppModel
     @State private var audioURLs: [UUID: URL] = [:]
     @State private var copiedTranscript = false
+    @State private var copiedOriginal = false
     @State private var confirmingDelete = false
     @Environment(\.dismiss) private var dismiss
 
@@ -19,7 +20,7 @@ struct SessionDetailView: View {
                             Text(emptyTranscriptText(for: session))
                                 .foregroundStyle(.secondary)
                         } else {
-                            Text(session.transcript)
+                            Text(model.text(of: session))
                                 .textSelection(.enabled)
                             Button(
                                 copiedTranscript ? "Copied" : "Copy transcript",
@@ -32,6 +33,22 @@ struct SessionDetailView: View {
                                     copiedTranscript = false
                                 }
                             }
+                        }
+                        if session.originalTranscript != nil {
+                            Button(
+                                copiedOriginal ? "Copied" : "Copy original",
+                                systemImage: copiedOriginal ? "checkmark" : "text.badge.plus"
+                            ) {
+                                model.copyOriginalTranscript(session)
+                                copiedOriginal = true
+                                Task {
+                                    try? await Task.sleep(for: .seconds(1.5))
+                                    copiedOriginal = false
+                                }
+                            }
+                            Text("Groq's text before phantom phrases like “Thank you” were removed.")
+                                .font(.footnote)
+                                .foregroundStyle(.secondary)
                         }
                     }
 

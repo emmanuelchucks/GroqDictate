@@ -35,7 +35,7 @@ struct GroqIOSClient {
         model: String = "whisper-large-v3",
         prompt: String = "",
         sessionID: UUID? = nil
-    ) async throws -> String {
+    ) async throws -> GroqTranscript {
         let uploadURL = try await Self.uploadableFile(for: fileURL)
         defer { if uploadURL != fileURL { try? FileManager.default.removeItem(at: uploadURL) } }
         let size = try uploadURL.resourceValues(forKeys: [.fileSizeKey]).fileSize ?? 0
@@ -80,7 +80,7 @@ struct GroqIOSClient {
     }
 
     private func perform(fileURL: URL, apiKey: String, model: String, prompt: String,
-                         requestID: UUID, sessionID: UUID?, attempt: Int) async throws -> String {
+                         requestID: UUID, sessionID: UUID?, attempt: Int) async throws -> GroqTranscript {
         let boundary = "Boundary-\(UUID().uuidString)"
         let bodyURL = FileManager.default.temporaryDirectory
             .appendingPathComponent("groqdictate-ios-\(UUID().uuidString).multipart")
@@ -125,10 +125,16 @@ struct GroqIOSClient {
     }
 
     /// Silence comes back as empty text, which is a finished part with no words.
-    static func transcript(from data: Data) throws -> String {
-        struct Response: Decodable { let text: String }
-        return try JSONDecoder().decode(Response.self, from: data).text
-            .trimmingCharacters(in: .whitespacesAndNewlines)
+    static func transcript(from data: Data) throws -> GroqTranscript {
+        struct Response: Decodable {
+            let text: String
+            let segments: [TranscriptSegment]?
+        }
+        let response = try JSONDecoder().decode(Response.self, from: data)
+        return GroqTranscript(
+            text: response.text.trimmingCharacters(in: .whitespacesAndNewlines),
+            segments: response.segments ?? []
+        )
     }
 
     /// `nil` means don't retry automatically; the part stays retryable by hand.

@@ -143,7 +143,7 @@ protocol TranscriptionEngine {
     func transcribe(
         fileURL: URL,
         config: Config,
-        completion: @escaping (Result<String, TranscriptionEngineError>) -> Void
+        completion: @escaping (Result<GroqTranscript, TranscriptionEngineError>) -> Void
     ) -> TranscriptionRequestHandle
 }
 
@@ -151,7 +151,7 @@ struct GroqTranscriptionEngine: TranscriptionEngine {
     typealias PerformTranscription = (
         URL,
         Config,
-        @escaping (Result<String, GroqAPI.TranscriptionError>) -> Void
+        @escaping (Result<GroqTranscript, GroqAPI.TranscriptionError>) -> Void
     ) -> GroqAPI.TranscriptionRequest
 
     private let performTranscription: PerformTranscription
@@ -164,7 +164,7 @@ struct GroqTranscriptionEngine: TranscriptionEngine {
     func transcribe(
         fileURL: URL,
         config: Config,
-        completion: @escaping (Result<String, TranscriptionEngineError>) -> Void
+        completion: @escaping (Result<GroqTranscript, TranscriptionEngineError>) -> Void
     ) -> TranscriptionRequestHandle {
         let request = performTranscription(fileURL, config) { result in
             completion(result.mapError(TranscriptionEngineError.init))

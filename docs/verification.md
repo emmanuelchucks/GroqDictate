@@ -55,7 +55,7 @@ Run these on the physical target before treating the iPhone app as reliable:
 6. Record beyond one five-minute rollover in both foreground and locked/background states; confirm the recorder stays active, the next audio file exists, and ordered transcription completes without manual retry.
 7. Terminate and relaunch during a recording; confirm finalized data is recovered and no existing session disappears.
 8. Stop after returning from a locked/background recording and confirm no paused or Resume state appears during finalization.
-9. Save vocabulary hints, confirm they are included once in each multipart transcription request, and confirm an empty field is omitted.
+9. Save spelling fixes and confirm the transcript, list row, clipboard and notification show the fixed names; confirm "Copy original" appears only on a recording where a phantom phrase was removed.
 10. Human-review the compact UI, waveform branding, copy tone, and recording-state clarity.
 
 ## macOS manual checks

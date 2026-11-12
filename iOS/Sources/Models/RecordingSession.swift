@@ -25,7 +25,10 @@ struct RecordingSession: Codable, Identifiable, Equatable {
         let startedAt: Date
         var endedAt: Date?
         var state: State
+        /// Cleaned text: phantom phrases over silence removed.
         var transcript: String?
+        /// Groq's text before cleaning, so a wrong removal can be recovered.
+        var rawTranscript: String?
         var lastError: String?
 
         init(index: Int, fileName: String, startedAt: Date = Date()) {
@@ -36,6 +39,7 @@ struct RecordingSession: Codable, Identifiable, Equatable {
             endedAt = nil
             state = .recording
             transcript = nil
+            rawTranscript = nil
             lastError = nil
         }
 
@@ -74,6 +78,16 @@ struct RecordingSession: Codable, Identifiable, Equatable {
         segments
             .sorted { $0.index < $1.index }
             .compactMap(\.transcript)
+            .filter { !$0.isEmpty }
+            .joined(separator: " ")
+    }
+
+    /// Groq's text before cleaning, for when cleaning removed something.
+    var originalTranscript: String? {
+        let parts = segments.sorted { $0.index < $1.index }
+        guard parts.contains(where: { $0.rawTranscript != nil && $0.rawTranscript != $0.transcript }) else { return nil }
+        return parts
+            .compactMap { $0.rawTranscript ?? $0.transcript }
             .filter { !$0.isEmpty }
             .joined(separator: " ")
     }

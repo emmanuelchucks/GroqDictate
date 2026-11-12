@@ -38,7 +38,8 @@ Wireless Bluetooth microphones can take a moment to wake on macOS. If the panel 
 - Long recordings roll into five-minute segments without deactivating background audio.
 - Failed or offline transcriptions remain available for manual retry; segments with no audio are identified as non-retryable.
 - Calls and alarms finalize the current segment before the app attempts to resume.
-- Optional vocabulary hints improve recognition of names, acronyms, and technical terms.
+- Phantom phrases Whisper writes over silence ("Thank you.", "Thank you for watching.") are removed when no one was speaking; the original text stays available.
+- Optional spelling fixes correct names Whisper keeps mishearing.
 - An accepted call can create a recording gap because iOS gives the call control of the microphone; audio captured before it remains safe.
 
 ## For Developers

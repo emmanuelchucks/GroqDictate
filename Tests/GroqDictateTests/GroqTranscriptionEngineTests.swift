@@ -9,7 +9,7 @@ final class GroqTranscriptionEngineTests: XCTestCase {
             return GroqAPI.TranscriptionRequest()
         }
 
-        var received: Result<String, TranscriptionEngineError>?
+        var received: Result<GroqTranscript, TranscriptionEngineError>?
 
         _ = engine.transcribe(
             fileURL: URL(fileURLWithPath: "/tmp/audio.wav"),

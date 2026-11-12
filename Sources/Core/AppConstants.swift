@@ -32,11 +32,6 @@ enum AppConstants {
         static let flac = "groqdictate.flac"
     }
 
-    enum Transcription {
-        static let maxSegmentGapSeconds: Double = 8
-        static let minCompressionRatio: Double = 0.8
-    }
-
     enum Diagnostics {
         static let debugDefaultsKey = "debug-logging-enabled"
         static let preserveAudioDefaultsKey = "preserve-debug-audio-enabled"

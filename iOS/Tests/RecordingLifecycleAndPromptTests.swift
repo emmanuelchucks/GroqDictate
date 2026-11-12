@@ -20,26 +20,17 @@ final class RecordingLifecycleAndPromptTests: XCTestCase {
         XCTAssertEqual(TimeInterval(3_723).formattedDuration, "1:02:03")
     }
 
-    func testVocabularyNormalizationTrimsAndEnforcesUIBudget() {
-        let oversized = "  " + String(repeating: "a", count: TranscriptionVocabulary.maximumCharacters + 25) + "  "
-        let normalized = TranscriptionVocabulary.normalized(oversized)
-
-        XCTAssertEqual(normalized.count, TranscriptionVocabulary.maximumCharacters)
-        XCTAssertFalse(normalized.hasPrefix(" "))
-        XCTAssertFalse(normalized.hasSuffix(" "))
-    }
-
-    func testMultipartBodyIncludesVocabularyPromptExactlyOnce() throws {
+    func testMultipartBodyIncludesPromptExactlyOnce() throws {
         let body = GroqIOSClient.makeMultipartBody(
             fileData: Data("audio".utf8),
             model: "whisper-large-v3",
-            prompt: "Groq, GroqDictate, XcodeGen",
+            prompt: "so we ship it.",
             boundary: "TestBoundary"
         )
         let text = try XCTUnwrap(String(data: body, encoding: .utf8))
 
         XCTAssertEqual(text.components(separatedBy: "name=\"prompt\"").count - 1, 1)
-        XCTAssertTrue(text.contains("\r\n\r\nGroq, GroqDictate, XcodeGen\r\n"))
+        XCTAssertTrue(text.contains("\r\n\r\nso we ship it.\r\n"))
         XCTAssertTrue(text.contains("name=\"file\"; filename=\"segment.m4a\""))
     }
 
@@ -56,23 +47,24 @@ final class RecordingLifecycleAndPromptTests: XCTestCase {
     }
 
     func testAutomaticClipboardTextRequiresCompletedNonblankTranscript() {
+        let fixes = SpellingFixes("Groq: grog")
         var session = RecordingSession()
-        session.transcript = "Physical iPhone clipboard test"
+        session.transcript = "Physical iPhone clipboard test with grog"
 
         session.state = .processing
-        XCTAssertNil(GroqDictateAppModel.automaticClipboardText(for: session))
+        XCTAssertNil(GroqDictateAppModel.automaticClipboardText(for: session, fixes: fixes))
 
         session.state = .failed
-        XCTAssertNil(GroqDictateAppModel.automaticClipboardText(for: session))
+        XCTAssertNil(GroqDictateAppModel.automaticClipboardText(for: session, fixes: fixes))
 
         session.state = .complete
         XCTAssertEqual(
-            GroqDictateAppModel.automaticClipboardText(for: session),
-            "Physical iPhone clipboard test"
+            GroqDictateAppModel.automaticClipboardText(for: session, fixes: fixes),
+            "Physical iPhone clipboard test with Groq"
         )
 
         session.transcript = "  \n"
-        XCTAssertNil(GroqDictateAppModel.automaticClipboardText(for: session))
+        XCTAssertNil(GroqDictateAppModel.automaticClipboardText(for: session, fixes: fixes))
     }
 
     func testOnlyAPausedRecordingCanStartOneResume() {
@@ -93,8 +85,11 @@ final class RecordingLifecycleAndPromptTests: XCTestCase {
     }
 
     func testSilentPartIsAnEmptyTranscriptNotAnError() throws {
-        XCTAssertEqual(try GroqIOSClient.transcript(from: Data(#"{"text":"  "}"#.utf8)), "")
-        XCTAssertEqual(try GroqIOSClient.transcript(from: Data(#"{"text":" Hello. "}"#.utf8)), "Hello.")
+        XCTAssertEqual(try GroqIOSClient.transcript(from: Data(#"{"text":"  "}"#.utf8)).text, "")
+        let response = #"{"text":" Hello. ","segments":[{"start":0,"end":1.5,"text":" Hello. ","no_speech_prob":0.1}]}"#
+        let transcript = try GroqIOSClient.transcript(from: Data(response.utf8))
+        XCTAssertEqual(transcript.text, "Hello.")
+        XCTAssertEqual(transcript.segments, [TranscriptSegment(start: 0, end: 1.5, text: " Hello. ")])
 
         var session = RecordingSession()
         for text in ["First.", "", "Third."] {
@@ -104,6 +99,10 @@ final class RecordingLifecycleAndPromptTests: XCTestCase {
             session.segments.append(segment)
         }
         XCTAssertEqual(session.assembledTranscript, "First. Third.")
+        XCTAssertNil(session.originalTranscript, "nothing was removed")
+
+        session.segments[1].rawTranscript = "Thank you."
+        XCTAssertEqual(session.originalTranscript, "First. Thank you. Third.")
     }
 
     func testRetryAfterIsReadAsSeconds() {
@@ -113,33 +112,17 @@ final class RecordingLifecycleAndPromptTests: XCTestCase {
         XCTAssertNil(GroqIOSClient.seconds(fromRetryAfter: "soon"))
     }
 
-    func testPromptContinuesFromThePreviousPartAfterTheVocabulary() {
-        XCTAssertEqual(TranscriptionPrompt.make(hints: "", previousText: nil), "")
-        XCTAssertEqual(TranscriptionPrompt.make(hints: "Groq, XcodeGen", previousText: nil), "Groq, XcodeGen")
-        XCTAssertEqual(TranscriptionPrompt.make(hints: "", previousText: " so we ship it. "), "so we ship it.")
-        XCTAssertEqual(
-            TranscriptionPrompt.make(hints: "Groq", previousText: "so we ship it."),
-            "Groq\nso we ship it."
-        )
+    func testPromptContinuesFromThePreviousPart() {
+        XCTAssertEqual(TranscriptionPrompt.make(previousText: nil), "")
+        XCTAssertEqual(TranscriptionPrompt.make(previousText: " so we ship it. "), "so we ship it.")
     }
 
     func testPromptKeepsOnlyWholeWordsFromTheEndOfALongPart() {
         let words = (1...200).map { "word\($0)" }.joined(separator: " ")
-        let prompt = TranscriptionPrompt.make(hints: "", previousText: words)
+        let prompt = TranscriptionPrompt.make(previousText: words)
 
         XCTAssertLessThanOrEqual(prompt.count, TranscriptionPrompt.previousTextCharacters)
         XCTAssertTrue(prompt.hasSuffix("word200"))
         XCTAssertTrue(prompt.hasPrefix("word"), "the tail starts at a word boundary")
-    }
-
-    func testPromptEchoedBackOnASilentPartIsDropped() {
-        let prompt = TranscriptionPrompt.make(hints: "Groq, XcodeGen", previousText: "and that is how we ship the release.")
-
-        XCTAssertEqual(TranscriptionPrompt.removingEcho(of: prompt, from: " and that is how we ship the release. "), "")
-        XCTAssertEqual(TranscriptionPrompt.removingEcho(of: prompt, from: "Groq."), "Groq.", "a short real answer stays")
-        XCTAssertEqual(
-            TranscriptionPrompt.removingEcho(of: prompt, from: "Next we test the new build on the phone."),
-            "Next we test the new build on the phone."
-        )
     }
 }

@@ -153,6 +153,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 } else {
                     try SMAppService.mainApp.unregister()
                 }
+            },
+            originalTranscript: { [weak self] in
+                self?.workflow.lastOriginalTranscript
             }
         )
     }

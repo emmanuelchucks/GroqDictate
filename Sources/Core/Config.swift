@@ -10,6 +10,7 @@ struct Config {
         static let model = "groq-model"
         static let micUID = "mic-uid"
         static let inputGain = "input-gain"
+        static let spellingFixes = "spelling-fixes"
     }
 
     enum KeychainKey {
@@ -67,6 +68,14 @@ struct Config {
         defaults.set(model, forKey: DefaultsKey.model)
         defaults.set(micUID ?? "", forKey: DefaultsKey.micUID)
         defaults.set(inputGain, forKey: DefaultsKey.inputGain)
+    }
+
+    static func loadSpellingFixes() -> String {
+        UserDefaults.standard.string(forKey: DefaultsKey.spellingFixes) ?? ""
+    }
+
+    static func saveSpellingFixes(_ text: String) {
+        UserDefaults.standard.set(text, forKey: DefaultsKey.spellingFixes)
     }
 
     static var hasAPIKey: Bool {

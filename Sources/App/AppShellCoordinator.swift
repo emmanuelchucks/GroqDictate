@@ -5,7 +5,7 @@ struct LaunchAtLoginMenuPresentation: Equatable {
     let isOn: Bool
 }
 
-final class AppShellCoordinator: NSObject {
+final class AppShellCoordinator: NSObject, NSMenuItemValidation {
     private let activateApp: () -> Void
     private let currentExternalApp: () -> NSRunningApplication?
     private let reactivateApp: (NSRunningApplication?) -> Void
@@ -16,6 +16,7 @@ final class AppShellCoordinator: NSObject {
     private let isLaunchAtLoginSupported: () -> Bool
     private let isLaunchAtLoginEnabled: () -> Bool
     private let setLaunchAtLoginEnabled: (Bool) throws -> Void
+    private let originalTranscript: () -> String?
 
     private var statusItem: NSStatusItem?
     private var launchAtLoginMenuItem: NSMenuItem?
@@ -30,7 +31,8 @@ final class AppShellCoordinator: NSObject {
         showSettings: @escaping () -> Void,
         isLaunchAtLoginSupported: @escaping () -> Bool,
         isLaunchAtLoginEnabled: @escaping () -> Bool,
-        setLaunchAtLoginEnabled: @escaping (Bool) throws -> Void
+        setLaunchAtLoginEnabled: @escaping (Bool) throws -> Void,
+        originalTranscript: @escaping () -> String? = { nil }
     ) {
         self.activateApp = activateApp
         self.currentExternalApp = currentExternalApp
@@ -42,6 +44,23 @@ final class AppShellCoordinator: NSObject {
         self.isLaunchAtLoginSupported = isLaunchAtLoginSupported
         self.isLaunchAtLoginEnabled = isLaunchAtLoginEnabled
         self.setLaunchAtLoginEnabled = setLaunchAtLoginEnabled
+        self.originalTranscript = originalTranscript
+    }
+
+    /// Groq's text from before phantom phrases were removed, so a wrong
+    /// removal can be recovered. Enabled only after one.
+    @objc private func copyOriginalTranscript() {
+        guard let text = originalTranscript() else { return }
+        NSPasteboard.general.clearContents()
+        NSPasteboard.general.setString(text, forType: .string)
+    }
+
+    func validateMenuItem(_ menuItem: NSMenuItem) -> Bool {
+        switch menuItem.action {
+        case #selector(copyOriginalTranscript): return originalTranscript() != nil
+        case #selector(toggleLaunchAtLogin): return isLaunchAtLoginSupported()
+        default: return true
+        }
     }
 
     func installMenus() {
@@ -158,6 +177,14 @@ final class AppShellCoordinator: NSObject {
         )
         settingsItem.target = self
         menu.addItem(settingsItem)
+
+        let copyOriginalItem = NSMenuItem(
+            title: AppStrings.Menu.copyOriginal,
+            action: #selector(copyOriginalTranscript),
+            keyEquivalent: ""
+        )
+        copyOriginalItem.target = self
+        menu.addItem(copyOriginalItem)
         menu.addItem(.separator())
         menu.addItem(NSMenuItem(title: AppStrings.Menu.quit, action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q"))
         statusItem.menu = menu

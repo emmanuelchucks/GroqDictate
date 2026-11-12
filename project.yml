@@ -25,6 +25,7 @@ targets:
     platform: macOS
     sources:
       - path: Sources
+      - path: Shared
       - path: GroqDictate/Assets.xcassets
     settings:
       base:
@@ -59,6 +60,7 @@ targets:
     platform: iOS
     sources:
       - path: iOS/Sources
+      - path: Shared
       - path: iOS/Assets.xcassets
     settings:
       base:

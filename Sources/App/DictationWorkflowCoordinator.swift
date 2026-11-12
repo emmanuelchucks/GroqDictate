@@ -79,6 +79,8 @@ final class DictationWorkflowCoordinator {
     private var hasRequestedPostEventAccess = false
     private var shownPermissionGuidanceActions = Set<PermissionService.GuidanceAction>()
     private var lastAudioFileURL: URL?
+    /// Groq's text for the last dictation when cleanup removed something.
+    private(set) var lastOriginalTranscript: String?
     private var currentTranscriptionRequest: TranscriptionRequestHandle?
     private var currentWorkflowID: String?
     private var panelNoticeToken = UUID()
@@ -269,16 +271,13 @@ final class DictationWorkflowCoordinator {
                 self.currentTranscriptionRequest = nil
 
                 switch result {
-                case .success(let text):
+                case .success(let transcript):
                     AppLog.audit(
-                        "transcription succeeded chars=\(text.count)",
+                        "transcription succeeded chars=\(transcript.text.count)",
                         category: .network,
-                        metadata: self.workflowMetadata(["transcription_chars": String(text.count)], includeTargetApp: true)
+                        metadata: self.workflowMetadata(["transcription_chars": String(transcript.text.count)], includeTargetApp: true)
                     )
-                    AppLog.debug("transcription success chars=\(text.count)", category: .network)
-                    self.recorder.cleanup()
-                    self.lastAudioFileURL = nil
-                    self.pasteText(text)
+                    self.finishTranscription(transcript, audioURL: fileURL)
                 case .failure(let error):
                     AppLog.audit(
                         "transcription failed kind=\(error.diagnosticCode)",
@@ -418,6 +417,39 @@ final class DictationWorkflowCoordinator {
             focusTracker.reactivate(dictationTargetApp)
         }
         completeWorkflowIfNeeded(outcome: "reset_to_idle", reason: reason)
+    }
+
+    /// Removes phantom phrases Whisper wrote over silence, checking the WAV
+    /// before it is deleted, then applies the user's spelling fixes.
+    private func finishTranscription(_ transcript: GroqTranscript, audioURL: URL) {
+        let workflowID = currentWorkflowID
+        Task { @MainActor [weak self] in
+            let cleaned = await TranscriptCleanup.cleaned(transcript) { ranges in
+                await SpeechCheck.speech(in: ranges, fileURL: audioURL)
+            }
+            guard let self, self.currentWorkflowID == workflowID, Self.shouldHandleTranscriptionCallback(for: self.state) else {
+                AppLog.debug("ignoring transcript cleanup after state reset", category: .network)
+                return
+            }
+            AppLog.metric(
+                "transcript_cleanup",
+                category: .network,
+                level: .debug,
+                values: [
+                    "candidates": String(TranscriptCleanup.candidates(in: transcript.segments).count),
+                    "changed": String(cleaned != transcript.text)
+                ]
+            )
+            self.lastOriginalTranscript = cleaned == transcript.text ? nil : transcript.text
+            // Like an empty answer from Groq: the WAV stays so Retry can resend it.
+            guard !cleaned.isEmpty else {
+                self.showTranscriptionError(.emptyTranscription)
+                return
+            }
+            self.recorder.cleanup()
+            self.lastAudioFileURL = nil
+            self.pasteText(SpellingFixes(Config.loadSpellingFixes()).apply(to: cleaned))
+        }
     }
 
     private func pasteText(_ text: String) {

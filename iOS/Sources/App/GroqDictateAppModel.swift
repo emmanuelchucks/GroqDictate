@@ -12,7 +12,8 @@ final class GroqDictateAppModel: ObservableObject {
     @Published private(set) var elapsed: TimeInterval = 0
     @Published private(set) var lifecycle: RecordingLifecycle = .idle
     @Published private(set) var apiKey: String
-    @Published private(set) var vocabularyHints: String
+    @Published private(set) var spellingFixesText: String
+    @Published private(set) var spellingFixes: SpellingFixes
     @Published private(set) var stoppedSessionID: UUID?
     @Published private(set) var copiedSessionID: UUID?
     @Published private(set) var slowSessionID: UUID?
@@ -36,7 +37,7 @@ final class GroqDictateAppModel: ObservableObject {
     private var hasRestored = false
     private var isRestoring = false
     private let segmentDuration: Duration = .seconds(5 * 60)
-    private static let vocabularyDefaultsKey = "transcription-vocabulary-hints"
+    private static let spellingFixesDefaultsKey = "spelling-fixes"
 
     init() {
         do {
@@ -45,9 +46,9 @@ final class GroqDictateAppModel: ObservableObject {
             fatalError("Could not create recording store: \(error)")
         }
         apiKey = keychain.loadAPIKey()
-        vocabularyHints = TranscriptionVocabulary.normalized(
-            UserDefaults.standard.string(forKey: Self.vocabularyDefaultsKey) ?? ""
-        )
+        let fixesText = UserDefaults.standard.string(forKey: Self.spellingFixesDefaultsKey) ?? ""
+        spellingFixesText = fixesText
+        spellingFixes = SpellingFixes(fixesText)
         capture.onInterruption = { [weak self] event in
             self?.handleInterruption(event)
         }
@@ -79,16 +80,17 @@ final class GroqDictateAppModel: ObservableObject {
         }
     }
 
-    func saveSettings(apiKey: String, vocabularyHints: String) -> String? {
+    func saveSettings(apiKey: String, spellingFixes: String) -> String? {
         do {
             let normalizedKey = apiKey.trimmingCharacters(in: .whitespacesAndNewlines)
             if normalizedKey != self.apiKey {
                 try keychain.saveAPIKey(normalizedKey)
             }
-            let normalizedHints = TranscriptionVocabulary.normalized(vocabularyHints)
-            UserDefaults.standard.set(normalizedHints, forKey: Self.vocabularyDefaultsKey)
+            let fixesText = spellingFixes.trimmingCharacters(in: .whitespacesAndNewlines)
+            UserDefaults.standard.set(fixesText, forKey: Self.spellingFixesDefaultsKey)
             self.apiKey = normalizedKey
-            self.vocabularyHints = normalizedHints
+            spellingFixesText = fixesText
+            self.spellingFixes = SpellingFixes(fixesText)
             retryAll()
             return nil
         } catch {
@@ -121,9 +123,22 @@ final class GroqDictateAppModel: ObservableObject {
         }
     }
 
+    /// The transcript as shown and copied. Fixes apply here rather than when
+    /// stored, so editing the list fixes older recordings too.
+    func text(of session: RecordingSession) -> String {
+        spellingFixes.apply(to: session.transcript)
+    }
+
     func copyTranscript(_ session: RecordingSession) {
-        UIPasteboard.general.string = session.transcript
+        UIPasteboard.general.string = text(of: session)
         clipboardCopy = ClipboardCopy(sessionID: session.id, changeCount: UIPasteboard.general.changeCount)
+    }
+
+    /// Groq's text before cleaning, for recovering a wrong removal.
+    func copyOriginalTranscript(_ session: RecordingSession) {
+        guard let original = session.originalTranscript else { return }
+        UIPasteboard.general.string = original
+        clipboardCopy = nil
     }
 
     /// True until anything else is copied; the change count says so without
@@ -524,22 +539,36 @@ final class GroqDictateAppModel: ObservableObject {
                 guard let segment = claimed.segments.first(where: { $0.state == .transcribing }) else { break }
                 let segmentID = segment.id
                 let prompt = TranscriptionPrompt.make(
-                    hints: vocabularyHints,
                     previousText: claimed.segments.first { $0.index == segment.index - 1 }?.transcript
                 )
 
                 var text: String?
+                var rawText: String?
                 var failure: String?
                 var unreadable = false
                 do {
-                    text = TranscriptionPrompt.removingEcho(
-                        of: prompt,
-                        from: try await client.transcribe(
-                            fileURL: store.audioURL(sessionID: sessionID, fileName: segment.fileName),
-                            apiKey: apiKey,
-                            prompt: prompt,
-                            sessionID: sessionID
-                        )
+                    let audioURL = store.audioURL(sessionID: sessionID, fileName: segment.fileName)
+                    let result = try await client.transcribe(
+                        fileURL: audioURL,
+                        apiKey: apiKey,
+                        prompt: prompt,
+                        sessionID: sessionID
+                    )
+                    rawText = result.text
+                    text = await TranscriptCleanup.cleaned(
+                        result,
+                        prompt: prompt,
+                        hasSpeech: { ranges in
+                            let started = ProcessInfo.processInfo.systemUptime
+                            let speech = await SpeechCheck.speech(in: ranges, fileURL: audioURL)
+                            // code: segments with no voice under them, or -1 when the audio couldn't be read.
+                            TimingDiagnostics.shared.record(
+                                .speechChecked, sessionID: sessionID,
+                                elapsedSeconds: ProcessInfo.processInfo.systemUptime - started,
+                                code: speech.map { $0.filter { !$0 }.count } ?? -1
+                            )
+                            return speech
+                        }
                     )
                 } catch {
                     failure = error.localizedDescription
@@ -547,12 +576,14 @@ final class GroqDictateAppModel: ObservableObject {
                     if case GroqIOSClient.ClientError.unreadableAudio = error { unreadable = true }
                 }
                 let finishedText = text
+                let finishedRawText = rawText
                 let finishedFailure = failure
                 let isUnreadable = unreadable
                 replace(try await store.update(sessionID) { session in
                     guard let index = session.segments.firstIndex(where: { $0.id == segmentID }) else { return }
                     if let finishedText {
                         session.segments[index].transcript = finishedText
+                        session.segments[index].rawTranscript = finishedRawText
                         session.segments[index].state = .complete
                     } else if isUnreadable {
                         // Retrying can't help a file Groq can't decode.
@@ -592,11 +623,11 @@ final class GroqDictateAppModel: ObservableObject {
         }
     }
 
-    nonisolated static func automaticClipboardText(for session: RecordingSession) -> String? {
+    nonisolated static func automaticClipboardText(for session: RecordingSession, fixes: SpellingFixes) -> String? {
         guard session.state == .complete,
               !session.transcript.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
         else { return nil }
-        return session.transcript
+        return fixes.apply(to: session.transcript)
     }
 
     /// The usual flow is Stop, then switch to the app to paste into, so this
@@ -605,7 +636,7 @@ final class GroqDictateAppModel: ObservableObject {
     /// iOS may refuse a background pasteboard write; the change count shows
     /// whether it took, and if not, the copy happens when the app comes back.
     private func copyTranscriptAutomaticallyIfComplete(_ session: RecordingSession) {
-        guard let transcript = Self.automaticClipboardText(for: session) else { return }
+        guard let transcript = Self.automaticClipboardText(for: session, fixes: spellingFixes) else { return }
         let pasteboard = UIPasteboard.general
         let previousChangeCount = pasteboard.changeCount
         pasteboard.string = transcript

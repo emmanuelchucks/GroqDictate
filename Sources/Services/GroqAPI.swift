@@ -180,7 +180,7 @@ enum GroqAPI {
     static func transcribe(
         fileURL: URL,
         config: Config,
-        completion: @escaping (Result<String, TranscriptionError>) -> Void
+        completion: @escaping (Result<GroqTranscript, TranscriptionError>) -> Void
     ) -> TranscriptionRequest {
         let requestHandle = TranscriptionRequest()
         let startedAt = CFAbsoluteTimeGetCurrent()
@@ -303,7 +303,7 @@ enum GroqAPI {
         startedAt: CFAbsoluteTime,
         readMs: Double,
         buildMs: Double,
-        completion: @escaping (Result<String, TranscriptionError>) -> Void
+        completion: @escaping (Result<GroqTranscript, TranscriptionError>) -> Void
     ) {
         guard !requestHandle.isCancelled else {
             requestHandle.finish()
@@ -422,15 +422,13 @@ enum GroqAPI {
                 return
             }
 
-            let text = extractTranscription(from: payload)
-
-            guard let text, !text.isEmpty else {
+            guard let transcript = extractTranscription(from: payload), !transcript.text.isEmpty else {
                 log("empty-transcription")
                 completion(.failure(.emptyTranscription))
                 return
             }
             log("ok")
-            completion(.success(text))
+            completion(.success(transcript))
         }
 
         requestHandle.setTask(task)
@@ -450,7 +448,7 @@ enum GroqAPI {
         readMs: Double,
         buildMs: Double,
         reason: String,
-        completion: @escaping (Result<String, TranscriptionError>) -> Void
+        completion: @escaping (Result<GroqTranscript, TranscriptionError>) -> Void
     ) {
         AppLog.metric(
             "transcription_retry_scheduled",
@@ -636,62 +634,22 @@ enum GroqAPI {
         )
     }
 
-    static func extractTranscription(from data: Data) -> String? {
+    /// Groq's text and its segments. The text is used as Groq sent it; the
+    /// segments let the caller remove phantom phrases (TranscriptCleanup).
+    static func extractTranscription(from data: Data) -> GroqTranscript? {
         guard let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else {
-            return String(data: data, encoding: .utf8)?.trimmingCharacters(in: .whitespacesAndNewlines)
+            return String(data: data, encoding: .utf8)
+                .map { GroqTranscript(text: $0.trimmingCharacters(in: .whitespacesAndNewlines), segments: []) }
         }
 
-        let topLevelText = trimmedText(json["text"] as? String)
-
-        guard let segments = json["segments"] as? [[String: Any]] else {
-            return topLevelText ?? String(data: data, encoding: .utf8)?.trimmingCharacters(in: .whitespacesAndNewlines)
+        let segments = (json["segments"] as? [[String: Any]] ?? []).compactMap { segment -> TranscriptSegment? in
+            guard let text = segment["text"] as? String else { return nil }
+            let start = (segment["start"] as? NSNumber)?.doubleValue ?? 0
+            let end = (segment["end"] as? NSNumber)?.doubleValue ?? start
+            return TranscriptSegment(start: start, end: end, text: text)
         }
-
-        logSegmentDiagnostics(segments)
-
-        if let topLevelText {
-            return topLevelText
-        }
-
-        let segmentText = segments.compactMap { segment in
-            segment["text"] as? String
-        }.joined().trimmingCharacters(in: .whitespacesAndNewlines)
-
-        return segmentText.isEmpty ? nil : segmentText
-    }
-
-    private static func trimmedText(_ text: String?) -> String? {
-        let trimmed = text?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
-        return trimmed.isEmpty ? nil : trimmed
-    }
-
-    private static func logSegmentDiagnostics(_ segments: [[String: Any]]) {
-        var suspect = 0
-        var lastEnd: Double = 0
-
-        for segment in segments {
-            let start = segment["start"] as? Double ?? 0
-            let end = segment["end"] as? Double ?? lastEnd
-            let compressionRatio = segment["compression_ratio"] as? Double ?? 0
-            let gap = start - lastEnd
-
-            if gap > AppConstants.Transcription.maxSegmentGapSeconds && compressionRatio < AppConstants.Transcription.minCompressionRatio {
-                suspect += 1
-            }
-
-            lastEnd = end
-        }
-
-        AppLog.metric(
-            "transcription_segments",
-            category: .network,
-            level: .debug,
-            values: [
-                "dropped": "0",
-                "kept": String(segments.count),
-                "suspect": String(suspect)
-            ]
-        )
+        let text = (json["text"] as? String) ?? segments.map(\.text).joined()
+        return GroqTranscript(text: text.trimmingCharacters(in: .whitespacesAndNewlines), segments: segments)
     }
 
     static func mapHTTPError(status: Int, headers: HTTPURLResponse, body: Data) -> TranscriptionError {
