@@ -85,20 +85,52 @@ enum TranscriptCleanup {
 
     /// Removes candidates the speech check finds no speech under. `hasSpeech`
     /// gets the candidates' time ranges and answers for each, in order, or nil
-    /// when it couldn't check. Groq's text comes back unchanged unless
-    /// something is removed, and when the segments don't add up to it.
+    /// when it couldn't check.
+    ///
+    /// A candidate with a voice under it can be Whisper replacing real words
+    /// with a stock phrase: sent alone, the stretch gave the user's words back
+    /// in 7 of 34 such cases (docs/transcript-cleanup.md). `retranscribe`
+    /// sends one stretch to Groq again; its text replaces the phrase only when
+    /// it is more than phantom phrases, and nil leaves the phrase as it was.
+    ///
+    /// Groq's text comes back unchanged unless something changed, and when
+    /// the segments don't add up to it.
     static func cleaned(
         _ transcript: GroqTranscript,
         prompt: String = "",
-        hasSpeech: ([ClosedRange<Double>]) async -> [Bool]?
+        hasSpeech: ([ClosedRange<Double>]) async -> [Bool]?,
+        retranscribe: (ClosedRange<Double>) async -> String? = { _ in nil }
     ) async -> String {
-        let segments = transcript.segments
+        var segments = transcript.segments
         let candidates = candidates(in: segments, prompt: prompt)
         guard !candidates.isEmpty, text(of: segments, removing: []) == transcript.text else { return transcript.text }
         let ranges = candidates.map { segments[$0].start...max(segments[$0].start, segments[$0].end) }
         guard let speech = await hasSpeech(ranges) else { return transcript.text }
-        let removed = Set(zip(candidates, speech).filter { !$0.1 }.map(\.0))
-        return removed.isEmpty ? transcript.text : text(of: segments, removing: removed)
+        var removed = Set<Int>()
+        var replaced = false
+        for (index, voiced) in zip(candidates, speech) {
+            guard voiced else {
+                removed.insert(index)
+                continue
+            }
+            let words = await retranscribe(stretch(of: index, in: segments))?
+                .trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+            guard !PhantomPhrases.matchesWhole(words) else { continue }
+            let segment = segments[index]
+            segments[index] = TranscriptSegment(start: segment.start, end: segment.end, text: " " + words)
+            replaced = true
+        }
+        return removed.isEmpty && !replaced ? transcript.text : text(of: segments, removing: removed)
+    }
+
+    /// The segment's time with half a second either side for Whisper's loose
+    /// timings, but not into its neighbours, whose words are already there.
+    static func stretch(of index: Int, in segments: [TranscriptSegment]) -> ClosedRange<Double> {
+        let segment = segments[index]
+        let lower = max(0, segment.start - 0.5, index > 0 ? segments[index - 1].end : 0)
+        var upper = segment.end + 0.5
+        if index + 1 < segments.count { upper = min(upper, segments[index + 1].start) }
+        return lower...max(upper, lower + 1)
     }
 }
 

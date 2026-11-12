@@ -46,7 +46,7 @@ struct SessionDetailView: View {
                                     copiedOriginal = false
                                 }
                             }
-                            Text("Groq's text before phantom phrases like “Thank you” were removed.")
+                            Text("Groq's text, with phantom phrases left in.")
                                 .font(.footnote)
                                 .foregroundStyle(.secondary)
                         }

@@ -29,6 +29,8 @@ struct RecordingSession: Codable, Identifiable, Equatable {
         var transcript: String?
         /// Groq's text before cleaning, so a wrong removal can be recovered.
         var rawTranscript: String?
+        /// Recorded with a Bluetooth mic at some point; nil for older parts.
+        var bluetoothInput: Bool?
         var lastError: String?
 
         init(index: Int, fileName: String, startedAt: Date = Date()) {

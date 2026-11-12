@@ -79,6 +79,7 @@ final class DictationWorkflowCoordinator {
     private var hasRequestedPostEventAccess = false
     private var shownPermissionGuidanceActions = Set<PermissionService.GuidanceAction>()
     private var lastAudioFileURL: URL?
+    private var lastInputWasBluetooth = true
     /// Groq's text for the last dictation when cleanup removed something.
     private(set) var lastOriginalTranscript: String?
     private var currentTranscriptionRequest: TranscriptionRequestHandle?
@@ -243,6 +244,7 @@ final class DictationWorkflowCoordinator {
             }
             AppLog.debug("audio capture ready", category: .audio)
             self.lastAudioFileURL = fileURL
+            self.lastInputWasBluetooth = self.recorder.inputIsBluetooth
 
             guard let config = self.loadConfig() else {
                 self.recorder.cleanup()
@@ -277,7 +279,7 @@ final class DictationWorkflowCoordinator {
                         category: .network,
                         metadata: self.workflowMetadata(["transcription_chars": String(transcript.text.count)], includeTargetApp: true)
                     )
-                    self.finishTranscription(transcript, audioURL: fileURL)
+                    self.finishTranscription(transcript, audioURL: fileURL, config: config)
                 case .failure(let error):
                     AppLog.audit(
                         "transcription failed kind=\(error.diagnosticCode)",
@@ -421,12 +423,24 @@ final class DictationWorkflowCoordinator {
 
     /// Removes phantom phrases Whisper wrote over silence, checking the WAV
     /// before it is deleted, then applies the user's spelling fixes.
-    private func finishTranscription(_ transcript: GroqTranscript, audioURL: URL) {
+    private func finishTranscription(_ transcript: GroqTranscript, audioURL: URL, config: Config) {
         let workflowID = currentWorkflowID
+        let engine = transcriptionEngine
+        let threshold = lastInputWasBluetooth ? SpeechCheck.threshold : SpeechCheck.widebandMicThreshold
         Task { @MainActor [weak self] in
-            let cleaned = await TranscriptCleanup.cleaned(transcript) { ranges in
-                await SpeechCheck.speech(in: ranges, fileURL: audioURL)
-            }
+            let cleaned = await TranscriptCleanup.cleaned(
+                transcript,
+                hasSpeech: { ranges in await SpeechCheck.speech(in: ranges, fileURL: audioURL, threshold: threshold) },
+                retranscribe: { range in
+                    guard let clip = await AudioClip.m4a(from: audioURL, range: range) else { return nil }
+                    defer { try? FileManager.default.removeItem(at: clip) }
+                    return await withCheckedContinuation { continuation in
+                        engine.transcribe(fileURL: clip, config: config) { result in
+                            continuation.resume(returning: try? result.get().text)
+                        }
+                    }
+                }
+            )
             guard let self, self.currentWorkflowID == workflowID, Self.shouldHandleTranscriptionCallback(for: self.state) else {
                 AppLog.debug("ignoring transcript cleanup after state reset", category: .network)
                 return
@@ -437,7 +451,8 @@ final class DictationWorkflowCoordinator {
                 level: .debug,
                 values: [
                     "candidates": String(TranscriptCleanup.candidates(in: transcript.segments).count),
-                    "changed": String(cleaned != transcript.text)
+                    "changed": String(cleaned != transcript.text),
+                    "bluetooth_input": String(threshold == SpeechCheck.threshold)
                 ]
             )
             self.lastOriginalTranscript = cleaned == transcript.text ? nil : transcript.text

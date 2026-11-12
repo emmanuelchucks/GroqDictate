@@ -16,11 +16,11 @@ Whisper writes stock phrases ("Thank you.", "Thank you for watching.", "Subtitle
 A segment is removed only when both hold:
 
 1. Its whole text, lowercased with punctuation and spaces collapsed, is one or more phrases from `PhantomPhrases.list` (or nothing but punctuation). Single common words ("you", "okay") stay off the list.
-2. Apple's built-in sound classifier (`SoundAnalysis`, `SNClassifySoundRequest(.version1)`, 1 s windows overlapping by half) hears no voice within the segment or half a second either side (Whisper's timings are loose): the highest of its voice labels (speech, whispering, shouting, singing, chatter and the like, `SpeechCheck.voiceLabels`) stays under `SpeechCheck.threshold`, 0.25. Real speech on the iPhone scored 0.74 or more; short words through the Bluetooth earpiece scored as low as 0.33. If the classifier can't read the audio, nothing is removed.
+2. Apple's built-in sound classifier (`SoundAnalysis`, `SNClassifySoundRequest(.version1)`, 1 s windows overlapping by half) hears no voice within the segment or half a second either side (Whisper's timings are loose): the highest of its voice labels (speech, whispering, shouting, singing, chatter and the like, `SpeechCheck.voiceLabels`) stays under the threshold. Real speech through the iPhone's own mic scored 0.74 or more, so audio from any mic that isn't Bluetooth uses 0.5 (`widebandMicThreshold`). Short words through the Bluetooth earpiece scored as low as 0.33, so Bluetooth audio uses 0.25: the Mac reads the selected mic's transport type when a dictation stops (unknown counts as Bluetooth), and the iPhone notes whether a Bluetooth input was used at any point in a part (older parts count as Bluetooth). None of 89 iPhone parts from 29 Aug to 12 Nov was recorded through the earpiece (earpiece audio has nothing above 4 kHz). If the classifier can't read the audio, nothing is removed.
 
 A segment that repeats the prompt (20 characters or more found in it) is a candidate too: Whisper echoes the prompt on silence. Before, the iPhone emptied such a part on text alone.
 
-Everything else stays, including a real "thank you" (speech is under it) and phantoms over TV or other people's voices (speech is under them too). When in doubt the text stays, as it does today.
+Everything else stays. A candidate with a voice under it is sent to Groq once more on its own (the segment's time, half a second either side but not into its neighbours, as a temporary M4A clip, no prompt): Whisper sometimes replaces real words with the phrase. If the answer is more than phantom phrases it replaces the phrase; if it is phantom phrases again (a real "thank you"), fails, or is rate-limited, the phrase stays. On the user's recordings, 34 such stretches gave back: the user's lost words 7 times (whole sentences), short words 12 times ("Yes.", "Amen.", some likely from the room), and the phrase again 15 times. Phantoms over TV or other people's voices can therefore become what those voices said.
 
 ## Owners
 
@@ -31,6 +31,7 @@ Everything else stays, including a real "thank you" (speech is under it) and pha
 | Which phrases are phantoms | `PhantomPhrases` list in `Shared/`, matched whole | substring or prefix matching |
 | Names | the user's "Spelling fixes" setting, applied after cleanup, whole words | Whisper's prompt |
 | Recovering a wrong removal | the unfiltered text kept beside the cleaned text | logs (transcript text is never logged) |
+| Words Whisper replaced with a phrase | a second Groq request for that stretch alone | our own speech recognition |
 
 ## Where it runs
 

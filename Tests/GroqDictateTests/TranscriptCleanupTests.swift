@@ -56,6 +56,29 @@ final class TranscriptCleanupTests: XCTestCase {
         XCTAssertEqual(kept, "Hello there, friend. Thank you.", "segments that don't add up to the text change nothing")
     }
 
+    func testAPhraseOverAVoiceIsReplacedOnlyByRealWordsFromASecondRequest() async {
+        let transcript = Self.transcript([
+            (0, 4, " Can you check the build?"),
+            (30, 60, " Thank you."),
+            (60, 62, " Thank you."),
+            (62, 66, " And the logs too."),
+        ])
+        var asked: [ClosedRange<Double>] = []
+        let recovered = await TranscriptCleanup.cleaned(
+            transcript,
+            hasSpeech: { _ in [true, true] },
+            retranscribe: { range in
+                asked.append(range)
+                return range.lowerBound < 40 ? " and the Wrangler config. " : "Thank you."
+            }
+        )
+        XCTAssertEqual(asked, [29.5...60, 60...62], "half a second either side, never into a neighbour")
+        XCTAssertEqual(recovered, "Can you check the build? and the Wrangler config. Thank you. And the logs too.")
+
+        let failed = await TranscriptCleanup.cleaned(transcript, hasSpeech: { _ in [true, true] }, retranscribe: { _ in nil })
+        XCTAssertEqual(failed, transcript.text, "a failed second request changes nothing")
+    }
+
     private static func transcript(_ parts: [(Double, Double, String)]) -> GroqTranscript {
         let segments = parts.map { TranscriptSegment(start: $0.0, end: $0.1, text: $0.2) }
         return GroqTranscript(

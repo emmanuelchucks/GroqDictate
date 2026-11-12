@@ -346,6 +346,7 @@ final class GroqDictateAppModel: ObservableObject {
                 return
             }
 
+            let previousUsedBluetooth = capture.takePartUsedBluetooth()
             do {
                 try capture.rotate(fileURL: store.audioURL(sessionID: sessionID, fileName: nextSegment.fileName))
             } catch {
@@ -366,6 +367,7 @@ final class GroqDictateAppModel: ObservableObject {
                     if let index = session.segments.firstIndex(where: { $0.id == previousSegmentID }) {
                         session.segments[index].endedAt = endedAt
                         session.segments[index].state = .pending
+                        session.segments[index].bluetoothInput = previousUsedBluetooth
                     }
                     if let index = session.segments.firstIndex(where: { $0.id == nextSegment.id }) {
                         session.segments[index].endedAt = endedAt
@@ -387,6 +389,7 @@ final class GroqDictateAppModel: ObservableObject {
                 guard let index = session.segments.firstIndex(where: { $0.id == previousSegmentID }) else { return }
                 session.segments[index].endedAt = rotatedAt
                 session.segments[index].state = .pending
+                session.segments[index].bluetoothInput = previousUsedBluetooth
                 session.segments[index].lastError = nil
             })
             // The finished part is transcribed while the next one records, so
@@ -408,9 +411,11 @@ final class GroqDictateAppModel: ObservableObject {
         let segmentID = activeSegmentID
         activeSegmentID = nil
         let endedAt = Date()
+        let usedBluetooth = capture.takePartUsedBluetooth()
         guard let session = try? await store.update(sessionID, { session in
             if let segmentID, let index = session.segments.firstIndex(where: { $0.id == segmentID }) {
                 session.segments[index].endedAt = endedAt
+                session.segments[index].bluetoothInput = usedBluetooth
                 session.segments[index].state = .pending
                 session.segments[index].lastError = nil
             }
@@ -560,7 +565,10 @@ final class GroqDictateAppModel: ObservableObject {
                         prompt: prompt,
                         hasSpeech: { ranges in
                             let started = ProcessInfo.processInfo.systemUptime
-                            let speech = await SpeechCheck.speech(in: ranges, fileURL: audioURL)
+                            let speech = await SpeechCheck.speech(
+                                in: ranges, fileURL: audioURL,
+                                threshold: segment.bluetoothInput == false ? SpeechCheck.widebandMicThreshold : SpeechCheck.threshold
+                            )
                             // code: segments with no voice under them, or -1 when the audio couldn't be read.
                             TimingDiagnostics.shared.record(
                                 .speechChecked, sessionID: sessionID,
@@ -568,6 +576,11 @@ final class GroqDictateAppModel: ObservableObject {
                                 code: speech.map { $0.filter { !$0 }.count } ?? -1
                             )
                             return speech
+                        },
+                        retranscribe: { [client, apiKey] range in
+                            guard let clip = await AudioClip.m4a(from: audioURL, range: range) else { return nil }
+                            defer { try? FileManager.default.removeItem(at: clip) }
+                            return try? await client.transcribe(fileURL: clip, apiKey: apiKey, sessionID: sessionID).text
                         }
                     )
                 } catch {

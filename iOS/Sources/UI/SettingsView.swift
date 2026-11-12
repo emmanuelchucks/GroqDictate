@@ -40,7 +40,7 @@ struct SettingsView: View {
                         }
                     }
 
-                    Text("One name per line: the right spelling, a colon, then how it comes out wrong, separated by commas.")
+                    Text("One per line, e.g. Groq: grog, grok")
                         .font(.footnote)
                         .foregroundStyle(.secondary)
                 }

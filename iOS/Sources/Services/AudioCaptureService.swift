@@ -38,6 +38,10 @@ final class AudioCaptureService: NSObject {
 
     var onInterruption: ((InterruptionEvent) -> Void)?
     private(set) var isRecording = false
+    /// Whether a Bluetooth mic was the input at any point in the current
+    /// part. Its narrowband audio makes short words score lower with the
+    /// speech classifier, so cleanup is more careful with such parts.
+    private var partUsedBluetooth = false
     private var recorder: AVAudioRecorder?
     private let audioSession = AVAudioSession.sharedInstance()
     private let recorderSettings: [String: Any] = [
@@ -102,6 +106,23 @@ final class AudioCaptureService: NSObject {
         guard recorder.record() else { throw CaptureError.couldNotStart }
         self.recorder = recorder
         isRecording = true
+        partUsedBluetooth = false
+        noteInput()
+    }
+
+    /// Answers for the part that is ending and starts over for the next one.
+    func takePartUsedBluetooth() -> Bool {
+        let used = partUsedBluetooth
+        partUsedBluetooth = false
+        noteInput()
+        return used
+    }
+
+    private func noteInput() {
+        let bluetooth: [AVAudioSession.Port] = [.bluetoothHFP, .bluetoothLE]
+        if audioSession.currentRoute.inputs.contains(where: { bluetooth.contains($0.portType) }) {
+            partUsedBluetooth = true
+        }
     }
 
     func rotate(fileURL: URL) throws {
@@ -167,6 +188,7 @@ final class AudioCaptureService: NSObject {
     }
 
     private func processRouteChange(reason rawReason: UInt) {
+        if isRecording { noteInput() }
         guard isRecording,
               AVAudioSession.RouteChangeReason(rawValue: rawReason) == .oldDeviceUnavailable
         else { return }

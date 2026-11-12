@@ -55,7 +55,7 @@ enum AppStrings {
         static let micLabel = "Microphone"
         static let inputGainLabel = "Input Gain"
         static let spellingFixesLabel = "Spelling Fixes"
-        static let spellingFixesHint = "One name per line: right spelling, colon, wrong spellings. Groq: grog, grok"
+        static let spellingFixesHint = "One per line, e.g. Groq: grog, grok"
         static let keyHint = "Free from console.groq.com → Stored in Keychain."
         static let done = "Done"
         static let systemDefaultMic = "System Default"

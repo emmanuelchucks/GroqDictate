@@ -12,10 +12,13 @@ struct SpeechWindow: Equatable {
 }
 
 enum SpeechCheck {
-    /// Calibrated on 12 Nov 2026 (docs/transcript-cleanup.md): real speech
-    /// peaked at 0.74 or more on the iPhone, but short words through a
-    /// Bluetooth earpiece at 0.33, so the line sits below that.
+    /// Calibrated on 12 Nov 2026 (docs/transcript-cleanup.md): short words
+    /// through a Bluetooth earpiece scored as low as 0.33, so by default the
+    /// line sits below that.
     static let threshold = 0.25
+    /// Real speech through the iPhone's own mic scored 0.74 or more; used for
+    /// any mic that isn't Bluetooth.
+    static let widebandMicThreshold = 0.5
 
     /// Whisper's segment timings are loose, so voice within half a second of
     /// a segment counts as under it. It only ever errs toward keeping text.
@@ -38,7 +41,9 @@ enum SpeechCheck {
     /// be read, and then nothing is removed. Only the ranges (with the
     /// margin) are classified: the whole of a five-minute part took 8.7 s on
     /// an iPhone XR.
-    static func speech(in ranges: [ClosedRange<Double>], fileURL: URL) async -> [Bool]? {
+    static func speech(
+        in ranges: [ClosedRange<Double>], fileURL: URL, threshold: Double = threshold
+    ) async -> [Bool]? {
         await Task.detached(priority: .userInitiated) {
             guard let file = try? AVAudioFile(forReading: fileURL) else { return nil }
             let duration = Double(file.length) / file.processingFormat.sampleRate
@@ -49,7 +54,7 @@ enum SpeechCheck {
                 let lower = max(0, min(range.lowerBound - margin - 1, duration - 3))
                 let upper = min(duration, max(range.upperBound + margin + 1, lower + 3))
                 guard let windows = windows(in: file, from: lower, to: upper) else { return nil }
-                answers.append(windows.isEmpty || hasSpeech(in: range, windows: windows))
+                answers.append(windows.isEmpty || hasSpeech(in: range, windows: windows, threshold: threshold))
             }
             return answers
         }.value
