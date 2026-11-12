@@ -164,7 +164,17 @@ struct ContentView: View {
     private var showsStop: Bool { model.lifecycle.presentsActiveControls }
 
 
-    private var buttonTint: Color { showsStop ? .red : .accentColor }
+    private var buttonTint: Color {
+        if showsStop { return .red }
+        return isTranscribing ? .transcribing : .accentColor
+    }
+
+    /// The recording just stopped is still being transcribed. Shown by colour
+    /// alone, so a glance tells when it's done without any text appearing.
+    private var isTranscribing: Bool {
+        guard let session = model.stoppedSession else { return false }
+        return [.processing, .recording, .interrupted].contains(session.state)
+    }
 
     private struct Status {
         var title: String
@@ -263,11 +273,16 @@ private struct SessionRow: View {
         switch session.state {
         case .recording: return .red
         case .interrupted: return .orange
-        case .processing: return .secondary
+        case .processing: return .transcribing
         case .complete: return .secondary
         case .failed: return .orange
         }
     }
+}
+
+extension Color {
+    /// Red, orange and green already mean recording, paused or failed, and copied.
+    static let transcribing = Color.blue
 }
 
 extension TimeInterval {

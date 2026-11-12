@@ -19,6 +19,7 @@ Decided (Nov 2026):
 - A part cut off by the app being killed mid-recording must stay recoverable.
 - Audio is never deleted automatically; the user deletes recordings by hand.
 - The app shows nothing while working normally: no spinners, and only a slow transcription (over four seconds) says so. Notices clear themselves.
+- Colour tells the state at a glance from across the table: red recording, orange paused or failed, blue transcribing (the big button and the row), green copied. Blue is colour only, so it doesn't break the rule above.
 
 The iPhone app shares the macOS waveform icon, orange-on-near-black identity, and compact, calm error language. Native iPhone interaction conventions take precedence over visually cloning the macOS panel.
 
