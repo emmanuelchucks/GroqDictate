@@ -16,7 +16,6 @@ final class GroqDictateAppModel: ObservableObject {
     @Published private(set) var spellingFixes: SpellingFixes
     @Published private(set) var stoppedSessionID: UUID?
     @Published private(set) var copiedSessionID: UUID?
-    @Published private(set) var slowSessionID: UUID?
     @Published private var clipboardCopy: ClipboardCopy?
     @Published var errorMessage: String?
 
@@ -310,7 +309,6 @@ final class GroqDictateAppModel: ObservableObject {
         TimingDiagnostics.shared.record(.recordingStopped, sessionID: sessionID)
         stopUptimes[sessionID] = ProcessInfo.processInfo.systemUptime
         stoppedSessionID = sessionID
-        markSlowIfStillProcessing(sessionID)
         await endActiveSegment(sessionID: sessionID, sessionState: .processing)
         currentSessionID = nil
         elapsed = 0
@@ -674,18 +672,6 @@ final class GroqDictateAppModel: ObservableObject {
             UINotificationFeedbackGenerator().notificationOccurred(.success)
         } else {
             Self.postTranscriptReadyNotification(transcript: transcript, copied: copied)
-        }
-    }
-
-    /// Uploads usually finish in one to three seconds (timing log, 8–10 Nov),
-    /// so only a wait past that is worth showing.
-    private func markSlowIfStillProcessing(_ sessionID: UUID) {
-        slowSessionID = nil
-        Task {
-            try? await Task.sleep(for: .seconds(4))
-            if stoppedSessionID == sessionID, session(id: sessionID)?.state == .processing {
-                slowSessionID = sessionID
-            }
         }
     }
 

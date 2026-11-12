@@ -18,8 +18,9 @@ Decided (Nov 2026):
 - Each finished five-minute part is transcribed while recording continues, so long recordings have most of their text ready at Stop.
 - A part cut off by the app being killed mid-recording must stay recoverable.
 - Audio is never deleted automatically; the user deletes recordings by hand.
-- The app shows nothing while working normally: no spinners, and only a slow transcription (over four seconds) says so. Notices clear themselves.
-- Colour tells the state at a glance from across the table: red recording, orange paused or failed, blue transcribing (the big button and the row), green copied. Blue is colour only, so it doesn't break the rule above.
+- No spinners. Notices clear themselves.
+- The centre of the screen follows the recording just stopped until it's copied (a few seconds later it settles to Ready) or fails (it stays, with Retry); starting a new one takes it over. The list shows every recording's own state. The big button's colour says only what a tap does (orange record, red stop); the status line under it carries progress.
+- Colour tells the state at a glance from across the table: red recording, orange paused or failed, blue transcribing (status line and row), green copied.
 
 The iPhone app shares the macOS waveform icon, orange-on-near-black identity, and compact, calm error language. Native iPhone interaction conventions take precedence over visually cloning the macOS panel.
 

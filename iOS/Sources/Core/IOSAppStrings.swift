@@ -9,7 +9,7 @@ enum IOSAppStrings {
         static let resuming = "Resuming…"
         static let resumeMicBusy = "The mic is in use, maybe by a call. Tap Resume when it's free."
         static let resumeFailed = "Couldn't resume. Recording so far is saved."
-        static let transcribing = "Still transcribing…"
+        static let transcribing = "Transcribing"
         static let copied = "Copied"
         static let notTranscribed = "Not transcribed"
         static let delete = "Delete"

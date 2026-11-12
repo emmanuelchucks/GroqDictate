@@ -164,17 +164,9 @@ struct ContentView: View {
     private var showsStop: Bool { model.lifecycle.presentsActiveControls }
 
 
-    private var buttonTint: Color {
-        if showsStop { return .red }
-        return isTranscribing ? .transcribing : .accentColor
-    }
-
-    /// The recording just stopped is still being transcribed. Shown by colour
-    /// alone, so a glance tells when it's done without any text appearing.
-    private var isTranscribing: Bool {
-        guard let session = model.stoppedSession else { return false }
-        return [.processing, .recording, .interrupted].contains(session.state)
-    }
+    /// The button's colour says what a tap does; the status line below it
+    /// follows the recording just stopped until it's copied.
+    private var buttonTint: Color { showsStop ? .red : .accentColor }
 
     private struct Status {
         var title: String
@@ -197,15 +189,12 @@ struct ContentView: View {
         case .starting, .stopping, .idle:
             break
         }
-        // A normal transcription takes a second or two and shows nothing;
-        // only a slow one says so.
         guard let session = model.stoppedSession else { return Status(title: IOSAppStrings.Recording.ready) }
         let duration = session.duration.formattedDuration
         switch session.state {
         case .processing, .recording, .interrupted:
-            guard model.slowSessionID == session.id else { return Status(title: IOSAppStrings.Recording.ready) }
-            return Status(title: IOSAppStrings.Recording.transcribing, detail: duration,
-                          detailIsDuration: true)
+            return Status(title: IOSAppStrings.Recording.transcribing, icon: "waveform",
+                          iconColor: .transcribing, detail: duration, detailIsDuration: true)
         case .complete where session.transcript.isEmpty:
             return Status(title: IOSAppStrings.Errors.noSpeechDetected, detail: duration, detailIsDuration: true)
         case .complete:
@@ -250,7 +239,7 @@ private struct SessionRow: View {
         switch session.state {
         case .recording: return "Recording"
         case .interrupted: return "Paused safely"
-        case .processing: return "Transcribing"
+        case .processing: return IOSAppStrings.Recording.transcribing
         case .complete: return text.isEmpty ? IOSAppStrings.Errors.noSpeechDetected : text
         case .failed:
             if session.pendingCount == 1 { return "1 part ready to retry" }
