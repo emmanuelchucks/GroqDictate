@@ -26,7 +26,6 @@ enum IOSAppStrings {
 
     enum Errors {
         static let micDenied = "Mic access denied"
-        static let micStopped = "Microphone stopped. Recording so far is saved."
         static let invalidKey = "Invalid API key"
         static let recordingTooLarge = "Recording too large"
         static let requestRejected = "Request rejected"

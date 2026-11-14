@@ -93,7 +93,7 @@ final class RecordingLifecycleAndPromptTests: XCTestCase {
 
         var session = RecordingSession()
         for text in ["First.", "", "Third."] {
-            var segment = RecordingSession.Segment.next(in: session)
+            var segment = RecordingSession.Segment.firstOfTake(in: session)
             segment.transcript = text
             segment.state = .complete
             session.segments.append(segment)

@@ -34,7 +34,7 @@ final class SessionStoreTests: XCTestCase {
     func testConcurrentUpdatesToDifferentSegmentsAllPersist() async throws {
         let session = try await store.createSession()
         for _ in 0..<20 {
-            try await store.update(session.id) { session in let next = RecordingSession.Segment.next(in: session); session.segments.append(next) }
+            try await store.update(session.id) { session in let next = RecordingSession.Segment.firstOfTake(in: session); session.segments.append(next) }
         }
         let segmentIDs = try await store.load(session.id).segments.map(\.id)
         await withThrowingTaskGroup(of: Void.self) { group in
@@ -56,7 +56,7 @@ final class SessionStoreTests: XCTestCase {
 
     func testDeleteRemovesSessionAndAudio() async throws {
         var session = try await store.createSession()
-        session = try await store.update(session.id) { session in let next = RecordingSession.Segment.next(in: session); session.segments.append(next) }
+        session = try await store.update(session.id) { session in let next = RecordingSession.Segment.firstOfTake(in: session); session.segments.append(next) }
         let audioURL = store.audioURL(sessionID: session.id, fileName: session.segments[0].fileName)
         try Data([1, 2, 3]).write(to: audioURL)
 
@@ -105,6 +105,107 @@ final class SessionStoreTests: XCTestCase {
         let seconds = try XCTUnwrap(part.endedAt).timeIntervalSince(part.startedAt)
         XCTAssertGreaterThan(seconds, 1, "the half before the cut is still readable")
         XCTAssertLessThan(seconds, 3, "the part ends where its audio does, not at relaunch")
+    }
+
+    func testRolloverEndsAPartAtTheLastWholeFrameAndRecoveryEndsTheNextAtTheCut() async throws {
+        let (session, first, take) = try await Self.takeBeingRecorded(in: store, seconds: 4)
+        let url = store.audioURL(sessionID: session.id, fileName: first.fileName)
+        let written = take.prefix(take.count / 2 + 3)
+        try written.write(to: url)
+
+        let rolledOver = try await store.rollOver(sessionID: session.id, partID: first.id)
+        let rolled = try XCTUnwrap(rolledOver)
+        let ended = rolled.session.segments[0]
+        let frames = ADTS.wholeFrames(in: written)
+        XCTAssertEqual(ended.state, .pending)
+        XCTAssertEqual(ended.endByte, frames.byteCount, "a frame still being written goes to the next part")
+        XCTAssertEqual(rolled.next.startByte, frames.lastFrameStart, "the parts share one frame")
+        XCTAssertEqual(rolled.next.state, .recording)
+        let noNewFrames = try await store.rollOver(sessionID: session.id, partID: rolled.next.id)
+        XCTAssertNil(noNewFrames, "only the shared frame is on disk for the next part")
+
+        try take.write(to: url)
+        let recovered = try await store.recoverInterruptedSessions()
+        let live = try XCTUnwrap(recovered.first { $0.id == session.id }?.segments.last)
+        XCTAssertEqual(live.state, .pending)
+        XCTAssertEqual(try XCTUnwrap(live.endedAt).timeIntervalSince(live.startedAt), 2, accuracy: 0.3)
+    }
+
+    func testPartEndedJustAfterARolloverHoldsNothingNew() async throws {
+        let (session, first, _) = try await Self.takeBeingRecorded(in: store, seconds: 4)
+        let rolledOver = try await store.rollOver(sessionID: session.id, partID: first.id)
+        let rolled = try XCTUnwrap(rolledOver)
+        var next = rolled.next
+        next.end(recorded: await store.recordedAudio(sessionID: session.id, segment: next))
+        XCTAssertEqual(next.state, .complete)
+        XCTAssertEqual(next.transcript, "")
+    }
+
+    func testPartAudioIsTheFileForAWholeFilePartAndExactlyItsBytesForAPartOfATake() async throws {
+        let (session, first, take) = try await Self.takeBeingRecorded(in: store, seconds: 4)
+        let url = store.audioURL(sessionID: session.id, fileName: first.fileName)
+        let whole = try await store.partAudio(sessionID: session.id, segment: first)
+        XCTAssertEqual(whole.url, url)
+        XCTAssertFalse(whole.isCopy)
+
+        try take.prefix(take.count / 2).write(to: url)
+        let rolledOver = try await store.rollOver(sessionID: session.id, partID: first.id)
+        let rolled = try XCTUnwrap(rolledOver)
+        try take.write(to: url)
+        let ended = rolled.session.segments[0]
+        for (part, bytes) in [
+            (ended, take.prefix(try XCTUnwrap(ended.endByte))),
+            (rolled.next, take.suffix(from: try XCTUnwrap(rolled.next.startByte))),
+        ] {
+            let copy = try await store.partAudio(sessionID: session.id, segment: part)
+            defer { try? FileManager.default.removeItem(at: copy.url) }
+            XCTAssertTrue(copy.isCopy)
+            XCTAssertEqual(try Data(contentsOf: copy.url), Data(bytes))
+            XCTAssertNotNil(try? AVAudioFile(forReading: copy.url), "each part reads as audio on its own")
+        }
+    }
+
+    /// A session with one recording part and its take's audio, already on disk.
+    private static func takeBeingRecorded(
+        in store: SessionStore, seconds: Double
+    ) async throws -> (RecordingSession, RecordingSession.Segment, Data) {
+        var session = try await store.createSession()
+        let first = RecordingSession.Segment.firstOfTake(in: session)
+        session.segments.append(first)
+        try await store.update(session.id) { [session] stored in stored = session }
+        let url = store.audioURL(sessionID: session.id, fileName: first.fileName)
+        try writeAAC(seconds: seconds, to: url)
+        return (session, first, try Data(contentsOf: url))
+    }
+
+    func testARecordingSavedBeforeTakesStillLoads() throws {
+        let json = #"""
+        {"createdAt":"2026-11-12T19:25:22Z","id":"B2C67642-0000-4000-8000-000000000000","state":"complete",
+         "transcript":"Hello.","updatedAt":"2026-11-12T19:30:25Z","segments":[
+          {"bluetoothInput":false,"endedAt":"2026-11-12T19:30:23Z","fileName":"segment-0001.aac",
+           "id":"0EB4C3F7-0000-4000-8000-000000000000","index":0,"rawTranscript":"Hello.",
+           "startedAt":"2026-11-12T19:25:22Z","state":"complete","transcript":"Hello."}]}
+        """#
+        let decoder = JSONDecoder()
+        decoder.dateDecodingStrategy = .iso8601
+        let session = try decoder.decode(RecordingSession.self, from: Data(json.utf8))
+        XCTAssertNil(session.segments[0].startByte)
+        XCTAssertNil(session.segments[0].endByte)
+        XCTAssertEqual(session.duration, 301)
+    }
+
+    func testASecondRolloverStartsFromTheSharedFrame() async throws {
+        let (session, first, take) = try await Self.takeBeingRecorded(in: store, seconds: 6)
+        let url = store.audioURL(sessionID: session.id, fileName: first.fileName)
+        try take.prefix(take.count / 3).write(to: url)
+        let one = try await store.rollOver(sessionID: session.id, partID: first.id)
+        let second = try XCTUnwrap(one).next
+        try take.prefix(2 * take.count / 3).write(to: url)
+        let two = try await store.rollOver(sessionID: session.id, partID: second.id)
+        let ended = try XCTUnwrap(two?.session.segments[1])
+        XCTAssertEqual(ended.startByte, second.startByte)
+        XCTAssertEqual(ended.endByte, ADTS.wholeFrames(in: take.prefix(2 * take.count / 3)).byteCount)
+        XCTAssertEqual(try XCTUnwrap(ended.endedAt).timeIntervalSince(ended.startedAt), 2, accuracy: 0.3)
     }
 
     func testPartWithNoReadableAudioIsMarkedNotRecorded() async throws {

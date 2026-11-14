@@ -3,7 +3,7 @@ import SwiftUI
 struct SessionDetailView: View {
     let sessionID: UUID
     @ObservedObject var model: GroqDictateAppModel
-    @State private var audioURLs: [UUID: URL] = [:]
+    @State private var audioURLs: [String: URL] = [:]
     @State private var copiedTranscript = false
     @State private var copiedOriginal = false
     @State private var confirmingDelete = false
@@ -53,29 +53,31 @@ struct SessionDetailView: View {
                     }
 
                     Section("Audio") {
-                        ForEach(session.segments.sorted { $0.index < $1.index }) { segment in
+                        let takes = Take.all(in: session)
+                        ForEach(Array(takes.enumerated()), id: \.element.fileName) { number, take in
+                            let title = takes.count == 1 ? "Original audio" : "Audio \(number + 1)"
                             HStack {
                                 VStack(alignment: .leading, spacing: 5) {
                                     HStack {
-                                        Text(audioTitle(for: segment, in: session))
-                                        if let status = segment.state.visibleDisplayName {
+                                        Text(title)
+                                        if let status = take.state.visibleDisplayName {
                                             Text(status)
                                                 .font(.caption)
-                                                .foregroundStyle(segment.state.needsAttention ? .orange : .secondary)
+                                                .foregroundStyle(take.state.needsAttention ? .orange : .secondary)
                                         }
                                     }
-                                    if segment.state != .unavailable, let error = segment.lastError {
+                                    if take.state != .unavailable, let error = take.lastError {
                                         Text(error)
                                             .font(.caption)
                                             .foregroundStyle(.orange)
                                     }
                                 }
                                 Spacer()
-                                if segment.state != .unavailable, let url = audioURLs[segment.id] {
+                                if take.state != .unavailable, let url = audioURLs[take.fileName] {
                                     ShareLink(item: url) {
                                         Image(systemName: "square.and.arrow.up")
                                     }
-                                    .accessibilityLabel("Share \(audioTitle(for: segment, in: session))")
+                                    .accessibilityLabel("Share \(title)")
                                 }
                             }
                         }
@@ -108,10 +110,10 @@ struct SessionDetailView: View {
                     Text(IOSAppStrings.Recording.deleteMessage)
                 }
                 .task(id: session.updatedAt) {
-                    var values: [UUID: URL] = [:]
-                    for segment in session.segments where segment.state != .unavailable {
-                        guard await model.hasAudio(sessionID: session.id, fileName: segment.fileName) else { continue }
-                        values[segment.id] = model.audioURL(sessionID: session.id, fileName: segment.fileName)
+                    var values: [String: URL] = [:]
+                    for fileName in Set(session.segments.map(\.fileName)) {
+                        guard await model.hasAudio(sessionID: session.id, fileName: fileName) else { continue }
+                        values[fileName] = model.audioURL(sessionID: session.id, fileName: fileName)
                     }
                     audioURLs = values
                 }
@@ -120,13 +122,6 @@ struct SessionDetailView: View {
             }
         }
         .navigationBarTitleDisplayMode(.inline)
-    }
-
-    private func audioTitle(
-        for segment: RecordingSession.Segment,
-        in session: RecordingSession
-    ) -> String {
-        session.segments.count == 1 ? "Original audio" : "Part \(segment.index + 1)"
     }
 
     private func emptyTranscriptText(for session: RecordingSession) -> String {
@@ -138,6 +133,32 @@ struct SessionDetailView: View {
         case .failed:
             return "No transcript available."
         }
+    }
+}
+
+/// One audio file and the parts in it: a take, or a single part of an
+/// older recording.
+private struct Take {
+    let fileName: String
+    let parts: [RecordingSession.Segment]
+
+    static func all(in session: RecordingSession) -> [Take] {
+        let parts = session.segments.sorted { $0.index < $1.index }
+        var names: [String] = []
+        for part in parts where !names.contains(part.fileName) { names.append(part.fileName) }
+        return names.map { name in Take(fileName: name, parts: parts.filter { $0.fileName == name }) }
+    }
+
+    /// The state that most needs the user's attention. A take is "Not
+    /// recorded" only when none of it was.
+    var state: RecordingSession.Segment.State {
+        if parts.allSatisfy({ $0.state == .unavailable }) { return .unavailable }
+        let order: [RecordingSession.Segment.State] = [.failed, .unavailable, .transcribing, .pending, .recording, .complete]
+        return order.first { state in parts.contains { $0.state == state } } ?? .complete
+    }
+
+    var lastError: String? {
+        parts.first { $0.state == .failed || $0.state == .unavailable }?.lastError
     }
 }
 

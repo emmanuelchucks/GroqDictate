@@ -79,7 +79,6 @@ final class DictationWorkflowCoordinator {
     private var hasRequestedPostEventAccess = false
     private var shownPermissionGuidanceActions = Set<PermissionService.GuidanceAction>()
     private var lastAudioFileURL: URL?
-    private var lastInputWasBluetooth = true
     /// Groq's text for the last dictation when cleanup removed something.
     private(set) var lastOriginalTranscript: String?
     private var currentTranscriptionRequest: TranscriptionRequestHandle?
@@ -244,7 +243,6 @@ final class DictationWorkflowCoordinator {
             }
             AppLog.debug("audio capture ready", category: .audio)
             self.lastAudioFileURL = fileURL
-            self.lastInputWasBluetooth = self.recorder.inputIsBluetooth
 
             guard let config = self.loadConfig() else {
                 self.recorder.cleanup()
@@ -426,11 +424,10 @@ final class DictationWorkflowCoordinator {
     private func finishTranscription(_ transcript: GroqTranscript, audioURL: URL, config: Config) {
         let workflowID = currentWorkflowID
         let engine = transcriptionEngine
-        let threshold = lastInputWasBluetooth ? SpeechCheck.threshold : SpeechCheck.widebandMicThreshold
         Task { @MainActor [weak self] in
             let cleaned = await TranscriptCleanup.cleaned(
                 transcript,
-                hasSpeech: { ranges in await SpeechCheck.speech(in: ranges, fileURL: audioURL, threshold: threshold) },
+                hasSpeech: { ranges in await SpeechCheck.speech(in: ranges, fileURL: audioURL) },
                 retranscribe: { range in
                     guard let clip = await AudioClip.m4a(from: audioURL, range: range) else { return nil }
                     defer { try? FileManager.default.removeItem(at: clip) }
@@ -451,8 +448,7 @@ final class DictationWorkflowCoordinator {
                 level: .debug,
                 values: [
                     "candidates": String(TranscriptCleanup.candidates(in: transcript.segments).count),
-                    "changed": String(cleaned != transcript.text),
-                    "bluetooth_input": String(threshold == SpeechCheck.threshold)
+                    "changed": String(cleaned != transcript.text)
                 ]
             )
             self.lastOriginalTranscript = cleaned == transcript.text ? nil : transcript.text

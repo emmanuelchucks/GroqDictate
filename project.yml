@@ -26,6 +26,10 @@ targets:
     sources:
       - path: Sources
       - path: Shared
+        excludes: ["Models/**"]
+      - path: Shared/Models/silero-vad.mlmodelc
+        type: folder
+        buildPhase: resources
       - path: GroqDictate/Assets.xcassets
     settings:
       base:
@@ -61,6 +65,10 @@ targets:
     sources:
       - path: iOS/Sources
       - path: Shared
+        excludes: ["Models/**"]
+      - path: Shared/Models/silero-vad.mlmodelc
+        type: folder
+        buildPhase: resources
       - path: iOS/Assets.xcassets
     settings:
       base:

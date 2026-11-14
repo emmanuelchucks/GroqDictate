@@ -35,7 +35,11 @@ final class GroqDictateAppModel: ObservableObject {
     private var uncopiedSessionID: UUID?
     private var hasRestored = false
     private var isRestoring = false
-    private let segmentDuration: Duration = .seconds(5 * 60)
+    /// Five minutes; launching with `-part-seconds N` shortens it for device tests.
+    private let segmentDuration: Duration = {
+        let override = UserDefaults.standard.double(forKey: "part-seconds")
+        return .seconds(override > 0 ? max(10, override) : 5 * 60)
+    }()
     private static let spellingFixesDefaultsKey = "spelling-fixes"
 
     init() {
@@ -260,15 +264,14 @@ final class GroqDictateAppModel: ObservableObject {
         }
     }
 
-    /// Reserves the next segment durably, then starts the recorder into it.
+    /// Reserves a new take durably, then starts the recorder into its file.
     /// If the recorder refuses, the reservation is removed again.
     private func startSegment(
         sessionID: UUID,
         stateIfRefused: RecordingSession.State
     ) async throws -> RecordingSession {
         let reserved = try await store.update(sessionID) { session in
-            let next = RecordingSession.Segment.next(in: session)
-            session.segments.append(next)
+            session.segments.append(.firstOfTake(in: session))
             session.state = .recording
         }
         guard let segment = reserved.segments.last else { throw AudioCaptureService.CaptureError.couldNotStart }
@@ -316,106 +319,39 @@ final class GroqDictateAppModel: ObservableObject {
         await process(sessionID: sessionID)
     }
 
-    private func rotateSegment() async {
+    /// Ends the current part where the recorder's whole frames end so far
+    /// and starts the next part there, in the same file. The recorder keeps
+    /// running: iOS refuses to start one while the app is in the background,
+    /// which is where most rollovers happen. False when nothing new was on
+    /// disk yet.
+    private func rotateSegment() async -> Bool {
         guard lifecycle == .recording,
               let sessionID = currentSessionID,
-              let previousSegmentID = activeSegmentID,
-              capture.isRecording
-        else { return }
-
-        do {
-            // Reserve the next segment durably while the current recorder is
-            // still active. No storage await occurs during the recorder swap.
-            let reserved = try await store.update(sessionID) { session in
-                let next = RecordingSession.Segment.next(in: session)
-                session.segments.append(next)
-            }
-            guard let nextSegment = reserved.segments.last else { return }
-            let removeReservation: @Sendable (inout RecordingSession) -> Void = { session in
-                session.segments.removeAll { $0.id == nextSegment.id }
-            }
-            guard lifecycle == .recording,
-                  currentSessionID == sessionID,
-                  activeSegmentID == previousSegmentID,
-                  capture.isRecording,
-                  !Task.isCancelled
-            else {
-                replace(try await store.update(sessionID, removeReservation))
-                return
-            }
-
-            let previousUsedBluetooth = capture.takePartUsedBluetooth()
-            do {
-                try capture.rotate(fileURL: store.audioURL(sessionID: sessionID, fileName: nextSegment.fileName))
-            } catch {
-                if capture.isRecording {
-                    // Preparation failed before the current recorder stopped.
-                    // Roll back only the empty reservation and keep recording.
-                    replace(try await store.update(sessionID, removeReservation))
-                    return
-                }
-
-                let endedAt = Date()
-                currentSessionID = nil
-                activeSegmentID = nil
-                lifecycle = .idle
-                capture.stop()
-                elapsedTask?.cancel()
-                let failed = try? await store.update(sessionID) { session in
-                    if let index = session.segments.firstIndex(where: { $0.id == previousSegmentID }) {
-                        session.segments[index].endedAt = endedAt
-                        session.segments[index].state = .pending
-                        session.segments[index].bluetoothInput = previousUsedBluetooth
-                    }
-                    if let index = session.segments.firstIndex(where: { $0.id == nextSegment.id }) {
-                        session.segments[index].endedAt = endedAt
-                        session.segments[index].state = .unavailable
-                        session.segments[index].lastError = "This segment was not recorded"
-                    }
-                    session.state = .processing
-                }
-                if let failed { replace(failed) }
-                errorMessage = IOSAppStrings.Errors.micStopped
-                stoppedSessionID = sessionID
-                await process(sessionID: sessionID)
-                return
-            }
-
-            let rotatedAt = Date()
-            activeSegmentID = nextSegment.id
-            replace(try await store.update(sessionID) { session in
-                guard let index = session.segments.firstIndex(where: { $0.id == previousSegmentID }) else { return }
-                session.segments[index].endedAt = rotatedAt
-                session.segments[index].state = .pending
-                session.segments[index].bluetoothInput = previousUsedBluetooth
-                session.segments[index].lastError = nil
-            })
-            // The finished part is transcribed while the next one records, so
-            // only the last part is left at Stop.
-            if !apiKey.isEmpty { Task { await process(sessionID: sessionID) } }
-        } catch {
-            // A persistence failure must not tear down a recorder that is still
-            // safely capturing audio, or a pause the interruption path now owns.
-            if !capture.isRecording, lifecycle == .recording {
-                currentSessionID = nil
-                activeSegmentID = nil
-                lifecycle = .idle
-                errorMessage = IOSAppStrings.Errors.micStopped
-            }
-        }
+              let partID = activeSegmentID,
+              capture.isRecording,
+              !Task.isCancelled,
+              let rotated = try? await store.rollOver(sessionID: sessionID, partID: partID)
+        else { return false }
+        replace(rotated.session)
+        // A pause or Stop that came during the store step waits for this task
+        // and then ends the part that is current now.
+        activeSegmentID = rotated.next.id
+        // The finished part is transcribed while the next one records, so
+        // only the last part is left at Stop.
+        if !apiKey.isEmpty { Task { await process(sessionID: sessionID) } }
+        return true
     }
 
+    /// The recorder has stopped, so the part ends where its audio does.
     private func endActiveSegment(sessionID: UUID, sessionState: RecordingSession.State) async {
         let segmentID = activeSegmentID
         activeSegmentID = nil
+        let part = segmentID.flatMap { id in session(id: sessionID)?.segments.first { $0.id == id } }
+        let audio = if let part { await store.recordedAudio(sessionID: sessionID, segment: part) } else { RecordedAudio?.none }
         let endedAt = Date()
-        let usedBluetooth = capture.takePartUsedBluetooth()
         guard let session = try? await store.update(sessionID, { session in
             if let segmentID, let index = session.segments.firstIndex(where: { $0.id == segmentID }) {
-                session.segments[index].endedAt = endedAt
-                session.segments[index].bluetoothInput = usedBluetooth
-                session.segments[index].state = .pending
-                session.segments[index].lastError = nil
+                session.segments[index].end(recorded: audio, at: endedAt)
             }
             // A part that failed while recording continued gets another try
             // in the pass that runs at Stop.
@@ -485,15 +421,15 @@ final class GroqDictateAppModel: ObservableObject {
         let segmentDuration = self.segmentDuration
         rotationTask = Task { [weak self] in
             try? await Task.sleep(for: segmentDuration)
-            guard !Task.isCancelled else { return }
-            await self?.rotateSegment()
-            guard let self,
-                  !Task.isCancelled,
-                  lifecycle == .recording,
-                  currentSessionID != nil,
-                  capture.isRecording
-            else { return }
-            startElapsedAndRotation()
+            while !Task.isCancelled, let self, lifecycle == .recording, currentSessionID != nil, capture.isRecording {
+                if await rotateSegment() {
+                    // Stop or a pause during the store step cancelled this task.
+                    if !Task.isCancelled, lifecycle == .recording { startElapsedAndRotation() }
+                    return
+                }
+                // Nothing new on disk yet: try again soon, not in five minutes.
+                try? await Task.sleep(for: .seconds(5))
+            }
         }
         elapsedTask = Task { [weak self] in
             while !Task.isCancelled {
@@ -550,7 +486,9 @@ final class GroqDictateAppModel: ObservableObject {
                 var failure: String?
                 var unreadable = false
                 do {
-                    let audioURL = store.audioURL(sessionID: sessionID, fileName: segment.fileName)
+                    let part = try await store.partAudio(sessionID: sessionID, segment: segment)
+                    defer { if part.isCopy { try? FileManager.default.removeItem(at: part.url) } }
+                    let audioURL = part.url
                     let result = try await client.transcribe(
                         fileURL: audioURL,
                         apiKey: apiKey,
@@ -563,10 +501,7 @@ final class GroqDictateAppModel: ObservableObject {
                         prompt: prompt,
                         hasSpeech: { ranges in
                             let started = ProcessInfo.processInfo.systemUptime
-                            let speech = await SpeechCheck.speech(
-                                in: ranges, fileURL: audioURL,
-                                threshold: segment.bluetoothInput == false ? SpeechCheck.widebandMicThreshold : SpeechCheck.threshold
-                            )
+                            let speech = await SpeechCheck.speech(in: ranges, fileURL: audioURL)
                             // code: segments with no voice under them, or -1 when the audio couldn't be read.
                             TimingDiagnostics.shared.record(
                                 .speechChecked, sessionID: sessionID,

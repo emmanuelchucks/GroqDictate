@@ -96,7 +96,10 @@ struct GroqIOSClient {
 
         var request = URLRequest(url: endpoint)
         request.httpMethod = "POST"
-        request.timeoutInterval = 120
+        // The slowest request that worked took 23 s on cellular, 18 s of it
+        // connecting; one that hung got no answer for a minute. A request
+        // that times out is retried on a new connection.
+        request.timeoutInterval = 45
         request.setValue("Bearer \(apiKey)", forHTTPHeaderField: "Authorization")
         request.setValue("multipart/form-data; boundary=\(boundary)", forHTTPHeaderField: "Content-Type")
 

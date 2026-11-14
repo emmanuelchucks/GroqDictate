@@ -1019,36 +1019,6 @@ final class AudioRecorder {
         }
     }
 
-    /// Whether the mic recording now is Bluetooth (or can't be told), whose
-    /// narrowband audio makes short words score lower with the speech
-    /// classifier, so cleanup is more careful with it.
-    var inputIsBluetooth: Bool {
-        // A selected mic that isn't connected falls back to the default one.
-        let selected = selectedDeviceUID.flatMap { uid in Self.availableInputDevices().first { $0.uid == uid } }
-        guard let deviceID = selected?.deviceID ?? Self.defaultInputDevice() else { return true }
-        var address = AudioObjectPropertyAddress(
-            mSelector: kAudioDevicePropertyTransportType,
-            mScope: kAudioObjectPropertyScopeGlobal,
-            mElement: kAudioObjectPropertyElementMain
-        )
-        var transport: UInt32 = 0
-        var size = UInt32(MemoryLayout<UInt32>.size)
-        guard AudioObjectGetPropertyData(deviceID, &address, 0, nil, &size, &transport) == noErr else { return true }
-        return transport == kAudioDeviceTransportTypeBluetooth || transport == kAudioDeviceTransportTypeBluetoothLE
-    }
-
-    private static func defaultInputDevice() -> AudioDeviceID? {
-        var address = AudioObjectPropertyAddress(
-            mSelector: kAudioHardwarePropertyDefaultInputDevice,
-            mScope: kAudioObjectPropertyScopeGlobal,
-            mElement: kAudioObjectPropertyElementMain
-        )
-        var deviceID = AudioDeviceID(0)
-        var size = UInt32(MemoryLayout<AudioDeviceID>.size)
-        let status = AudioObjectGetPropertyData(AudioObjectID(kAudioObjectSystemObject), &address, 0, nil, &size, &deviceID)
-        return status == noErr && deviceID != 0 ? deviceID : nil
-    }
-
     static func availableInputDevices() -> [AudioDevice] {
         let systemObject = AudioObjectID(kAudioObjectSystemObject)
         var address = AudioObjectPropertyAddress(

@@ -52,7 +52,8 @@ Run these on the physical target before treating the iPhone app as reliable:
 3. Record with the screen locked and while using a non-audio app.
 4. Exercise a dismissed alarm, rejected call, and accepted call; confirm every pre-interruption segment remains available and capture resumes or clearly asks for one tap.
 5. Disable networking before stop, restore it, and retry pending transcription.
-6. Record beyond one five-minute rollover in both foreground and locked/background states; confirm the recorder stays active, the next audio file exists, and ordered transcription completes without manual retry.
+6. Record beyond one five-minute rollover in both foreground and locked/background states, including the phone auto-locking at the rollover; confirm no part is "Not recorded", the finished part uploads during recording, and ordered transcription completes without manual retry. Launching with `-part-seconds 30` shortens parts for these checks.
+6a. After Stop with the app in the background, the timing log's `speechChecked` code is 0 or more, not -1.
 7. Terminate and relaunch during a recording; confirm finalized data is recovered and no existing session disappears.
 8. Stop after returning from a locked/background recording and confirm no paused or Resume state appears during finalization.
 9. Save spelling fixes and confirm the transcript, list row, clipboard and notification show the fixed names; confirm "Copy original" appears only on a recording where a phantom phrase was removed.

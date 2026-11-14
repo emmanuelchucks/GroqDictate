@@ -92,6 +92,8 @@ enum TranscriptCleanup {
     /// in 7 of 34 such cases (docs/transcript-cleanup.md). `retranscribe`
     /// sends one stretch to Groq again; its text replaces the phrase only when
     /// it is more than phantom phrases, and nil leaves the phrase as it was.
+    /// Voiced candidates next to each other go as one stretch, since separate
+    /// stretches overlap and gave the same words back twice.
     ///
     /// Groq's text comes back unchanged unless something changed, and when
     /// the segments don't add up to it.
@@ -106,31 +108,66 @@ enum TranscriptCleanup {
         guard !candidates.isEmpty, text(of: segments, removing: []) == transcript.text else { return transcript.text }
         let ranges = candidates.map { segments[$0].start...max(segments[$0].start, segments[$0].end) }
         guard let speech = await hasSpeech(ranges) else { return transcript.text }
-        var removed = Set<Int>()
+        var removed = Set(zip(candidates, speech).filter { !$0.1 }.map(\.0))
         var replaced = false
-        for (index, voiced) in zip(candidates, speech) {
-            guard voiced else {
-                removed.insert(index)
-                continue
-            }
-            let words = await retranscribe(stretch(of: index, in: segments))?
-                .trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        for run in runs(of: zip(candidates, speech).filter(\.1).map(\.0)) {
+            let kept = segments.indices.filter { !removed.contains($0) }
+            let before = kept.filter { $0 < run.lowerBound }.map { segments[$0].text }.joined()
+            let after = kept.filter { $0 > run.upperBound }.map { segments[$0].text }.joined()
+            let answer = await retranscribe(stretch(of: run, in: segments)) ?? ""
+            let words = trimmingRepeats(of: answer, before: before, after: after)
             guard !PhantomPhrases.matchesWhole(words) else { continue }
-            let segment = segments[index]
-            segments[index] = TranscriptSegment(start: segment.start, end: segment.end, text: " " + words)
+            let first = segments[run.lowerBound]
+            segments[run.lowerBound] = TranscriptSegment(start: first.start, end: first.end, text: " " + words)
+            removed.formUnion(run.dropFirst())
             replaced = true
         }
         return removed.isEmpty && !replaced ? transcript.text : text(of: segments, removing: removed)
     }
 
-    /// The segment's time with half a second either side for Whisper's loose
+    /// Consecutive indexes grouped, in order.
+    static func runs(of indexes: [Int]) -> [ClosedRange<Int>] {
+        var runs: [ClosedRange<Int>] = []
+        for index in indexes {
+            if let last = runs.last, last.upperBound + 1 == index {
+                runs[runs.count - 1] = last.lowerBound...index
+            } else {
+                runs.append(index...index)
+            }
+        }
+        return runs
+    }
+
+    /// The run's time with half a second either side for Whisper's loose
     /// timings, but not into its neighbours, whose words are already there.
-    static func stretch(of index: Int, in segments: [TranscriptSegment]) -> ClosedRange<Double> {
-        let segment = segments[index]
-        let lower = max(0, segment.start - 0.5, index > 0 ? segments[index - 1].end : 0)
-        var upper = segment.end + 0.5
-        if index + 1 < segments.count { upper = min(upper, segments[index + 1].start) }
+    static func stretch(of run: ClosedRange<Int>, in segments: [TranscriptSegment]) -> ClosedRange<Double> {
+        let first = segments[run.lowerBound], last = segments[run.upperBound]
+        let lower = max(0, first.start - 0.5, run.lowerBound > 0 ? segments[run.lowerBound - 1].end : 0)
+        var upper = last.end + 0.5
+        if run.upperBound + 1 < segments.count { upper = min(upper, segments[run.upperBound + 1].start) }
         return lower...max(upper, lower + 1)
+    }
+
+    /// The stretch can still catch a neighbour's words at its edges, so an
+    /// answer's first words that repeat the text before it, and last words
+    /// that repeat the text after it, are dropped (up to five each side).
+    static func trimmingRepeats(of answer: String, before: String, after: String) -> String {
+        var words = answer.split(whereSeparator: \.isWhitespace).map(String.init)
+        let previous = PhantomPhrases.normalizedWords(before), next = PhantomPhrases.normalizedWords(after)
+        let key = { (word: String) in PhantomPhrases.normalizedWords(word).joined(separator: " ") }
+        if let count = (1...5).reversed().first(where: { count in
+            count <= words.count && count <= previous.count
+                && words.prefix(count).map(key) == Array(previous.suffix(count))
+        }) {
+            words.removeFirst(count)
+        }
+        if let count = (1...5).reversed().first(where: { count in
+            count <= words.count && count <= next.count
+                && words.suffix(count).map(key) == Array(next.prefix(count))
+        }) {
+            words.removeLast(count)
+        }
+        return words.joined(separator: " ")
     }
 }
 

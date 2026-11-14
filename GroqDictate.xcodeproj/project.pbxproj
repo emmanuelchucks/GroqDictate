@@ -10,6 +10,7 @@
 		0030D4588317E10EC8B746E1 /* SerialRunner.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0E6FC2C23088EF6AA256D064 /* SerialRunner.swift */; };
 		005D51645EE05FF7BA6C2447 /* AudioPreprocessor.swift in Sources */ = {isa = PBXBuildFile; fileRef = 275EC8D422A1F5A479BFDF18 /* AudioPreprocessor.swift */; };
 		052638DD34D768594E2FCBC7 /* FocusTracker.swift in Sources */ = {isa = PBXBuildFile; fileRef = FA1486D8921DABF861D36301 /* FocusTracker.swift */; };
+		09A39943626BC151A75AAEB7 /* ADTS.swift in Sources */ = {isa = PBXBuildFile; fileRef = D6438AB14AD4637CE36A50A8 /* ADTS.swift */; };
 		0CA859C228689E1BC692EA4B /* AudioCaptureService.swift in Sources */ = {isa = PBXBuildFile; fileRef = BD3423C60FAF9E052C7014FE /* AudioCaptureService.swift */; };
 		0D4E6E9756123D2F454804EF /* AppConstants.swift in Sources */ = {isa = PBXBuildFile; fileRef = F06DBCC30E9F864A7CBAF146 /* AppConstants.swift */; };
 		0E247056637D4C2F2F81008E /* IOSKeychainStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0C79A48C3E195CFE84963F29 /* IOSKeychainStore.swift */; };
@@ -29,6 +30,7 @@
 		38DC2EC9880712B86F89D656 /* TranscriptionEngine.swift in Sources */ = {isa = PBXBuildFile; fileRef = 78DD936B553E146A6DC9CD76 /* TranscriptionEngine.swift */; };
 		419D49EB7A0C9146DA0A9A97 /* SerialRunnerTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0353A3746920CA6925A48642 /* SerialRunnerTests.swift */; };
 		424D67E43C519FBD44E30990 /* DictationWorkflowCoordinator.swift in Sources */ = {isa = PBXBuildFile; fileRef = ED99481B3CD4AA98D4E53A31 /* DictationWorkflowCoordinator.swift */; };
+		42A9116C4FE395BB72F046AF /* ADTSTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = F2E7B5A8345072167B394D16 /* ADTSTests.swift */; };
 		57740BE07224C4B34EEA1900 /* TimingDiagnosticsTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = F383BE09B3E6D1C3029EEEC9 /* TimingDiagnosticsTests.swift */; };
 		598D5D51F04DAEDA88E51BCB /* GroqTranscriptionEngineTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5115F66B76BEDD2652496223 /* GroqTranscriptionEngineTests.swift */; };
 		5B1FCEE75BB5F29343889699 /* GroqDictateIOSApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = 86B2667019D21508CBD54339 /* GroqDictateIOSApp.swift */; };
@@ -46,6 +48,7 @@
 		93C0B30B2C700530E61A6FC2 /* AppShellCoordinator.swift in Sources */ = {isa = PBXBuildFile; fileRef = EEABBD4CEC1B329DBC2A815A /* AppShellCoordinator.swift */; };
 		95AF18D03D3D393DFF3C38FD /* SetupWindowCoordinatorTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1B706011927C316F71EA16F1 /* SetupWindowCoordinatorTests.swift */; };
 		9613791A7D7D8C50E705134F /* AudioClip.swift in Sources */ = {isa = PBXBuildFile; fileRef = E654E053B5933BAAF408AAB4 /* AudioClip.swift */; };
+		97851B7C1492ACC48147EA0E /* silero-vad.mlmodelc in Resources */ = {isa = PBXBuildFile; fileRef = A4832E97D81F546ED8792710 /* silero-vad.mlmodelc */; };
 		990C6E591524ECD25AF8A277 /* RecordingSession.swift in Sources */ = {isa = PBXBuildFile; fileRef = 387EBB83CFCBC3FD53F74887 /* RecordingSession.swift */; };
 		A195DEB2BD188E683551861C /* SessionStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = 71FFD4D11D3D8C7EB99FAC38 /* SessionStore.swift */; };
 		B05B65EA4AC165118DD4629D /* SetupWindowCoordinator.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5AC98FC2E5761699FE2F13BD /* SetupWindowCoordinator.swift */; };
@@ -58,6 +61,7 @@
 		C325F23FC6328DFF9D71A7D2 /* AppBootstrapCoordinator.swift in Sources */ = {isa = PBXBuildFile; fileRef = C9286240350B9E8ECB173F1B /* AppBootstrapCoordinator.swift */; };
 		CC87F091ABCB2537FFD026D1 /* SetupConfigurationController.swift in Sources */ = {isa = PBXBuildFile; fileRef = A7AEC1AF9678746AD926C2D5 /* SetupConfigurationController.swift */; };
 		CCF0C9CA70F08E9C93653280 /* Config.swift in Sources */ = {isa = PBXBuildFile; fileRef = 847D12320F149726245D2221 /* Config.swift */; };
+		CF70290B525EE8A3A67792E1 /* silero-vad.mlmodelc in Resources */ = {isa = PBXBuildFile; fileRef = A4832E97D81F546ED8792710 /* silero-vad.mlmodelc */; };
 		D03888460ECA00D3BE01E614 /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = 39658BDC555554934C00F32D /* Assets.xcassets */; };
 		D160096DFAA27F0D95592322 /* AudioPreprocessorTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = CE28824FD1911A5B8CDC11D2 /* AudioPreprocessorTests.swift */; };
 		D3A988FE131D2292FCC3EC8B /* main.swift in Sources */ = {isa = PBXBuildFile; fileRef = 05DB0DE76801ADB10FD9D67C /* main.swift */; };
@@ -129,6 +133,7 @@
 		98175286F0C06E36428CBACC /* AboutDialog.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AboutDialog.swift; sourceTree = "<group>"; };
 		985FE6CA57E573D06BA367F7 /* HotkeyMonitor.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HotkeyMonitor.swift; sourceTree = "<group>"; };
 		A42E63B44CC5C2DAD5AC7322 /* SettingsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SettingsView.swift; sourceTree = "<group>"; };
+		A4832E97D81F546ED8792710 /* silero-vad.mlmodelc */ = {isa = PBXFileReference; lastKnownFileType = folder; name = "silero-vad.mlmodelc"; path = "Shared/Models/silero-vad.mlmodelc"; sourceTree = SOURCE_ROOT; };
 		A7AEC1AF9678746AD926C2D5 /* SetupConfigurationController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SetupConfigurationController.swift; sourceTree = "<group>"; };
 		B5CCFD521445E916B39D8674 /* SpeechCheck.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SpeechCheck.swift; sourceTree = "<group>"; };
 		B8AFBADD28B120FFF5999E29 /* ContentView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ContentView.swift; sourceTree = "<group>"; };
@@ -141,6 +146,7 @@
 		CAF7B40CFCD2B13520A546E6 /* GroqDictateIOSTests.xctest */ = {isa = PBXFileReference; includeInIndex = 0; lastKnownFileType = wrapper.cfbundle; path = GroqDictateIOSTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
 		CE28824FD1911A5B8CDC11D2 /* AudioPreprocessorTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AudioPreprocessorTests.swift; sourceTree = "<group>"; };
 		D2A140DEAD9739D021979305 /* IOSAppStrings.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = IOSAppStrings.swift; sourceTree = "<group>"; };
+		D6438AB14AD4637CE36A50A8 /* ADTS.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ADTS.swift; sourceTree = "<group>"; };
 		E48EE166C5CF5EDF1195966F /* AppDelegateLogicTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppDelegateLogicTests.swift; sourceTree = "<group>"; };
 		E654E053B5933BAAF408AAB4 /* AudioClip.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AudioClip.swift; sourceTree = "<group>"; };
 		ECA808B7D1F99932D7A1D06E /* AppLog.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppLog.swift; sourceTree = "<group>"; };
@@ -148,6 +154,7 @@
 		EEABBD4CEC1B329DBC2A815A /* AppShellCoordinator.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppShellCoordinator.swift; sourceTree = "<group>"; };
 		F022DFD4D5E8FC315CC0523B /* GroqDictateTests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = GroqDictateTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
 		F06DBCC30E9F864A7CBAF146 /* AppConstants.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppConstants.swift; sourceTree = "<group>"; };
+		F2E7B5A8345072167B394D16 /* ADTSTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ADTSTests.swift; sourceTree = "<group>"; };
 		F383BE09B3E6D1C3029EEEC9 /* TimingDiagnosticsTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TimingDiagnosticsTests.swift; sourceTree = "<group>"; };
 		FA1486D8921DABF861D36301 /* FocusTracker.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FocusTracker.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
@@ -205,6 +212,7 @@
 		3D8CFCF8673B55DB69F2DFA9 = {
 			isa = PBXGroup;
 			children = (
+				A4832E97D81F546ED8792710 /* silero-vad.mlmodelc */,
 				202C1EC5FCDEE4F0B61C8E94 /* GroqDictate */,
 				C3546C1AA45C4CF50E77B36A /* GroqDictateTests */,
 				10B86E0896ADF54CE329BE5A /* iOS */,
@@ -228,6 +236,7 @@
 		43E05E4014C0122F94048BEC /* Services */ = {
 			isa = PBXGroup;
 			children = (
+				D6438AB14AD4637CE36A50A8 /* ADTS.swift */,
 				BD3423C60FAF9E052C7014FE /* AudioCaptureService.swift */,
 				6DEEE8E2CED9BE86848C602D /* GroqIOSClient.swift */,
 				0C79A48C3E195CFE84963F29 /* IOSKeychainStore.swift */,
@@ -279,6 +288,7 @@
 		6F5D2004FA88DAD5D8BAE881 /* Tests */ = {
 			isa = PBXGroup;
 			children = (
+				F2E7B5A8345072167B394D16 /* ADTSTests.swift */,
 				145F3072653C303545EC06CB /* RecordingLifecycleAndPromptTests.swift */,
 				0353A3746920CA6925A48642 /* SerialRunnerTests.swift */,
 				922D9386748E86345E4083BC /* SessionStoreTests.swift */,
@@ -482,6 +492,7 @@
 			buildActionMask = 2147483647;
 			files = (
 				D03888460ECA00D3BE01E614 /* Assets.xcassets in Resources */,
+				97851B7C1492ACC48147EA0E /* silero-vad.mlmodelc in Resources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -490,6 +501,7 @@
 			buildActionMask = 2147483647;
 			files = (
 				12790590AC92EAA8B1524440 /* Assets.xcassets in Resources */,
+				CF70290B525EE8A3A67792E1 /* silero-vad.mlmodelc in Resources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -551,6 +563,7 @@
 			isa = PBXSourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				42A9116C4FE395BB72F046AF /* ADTSTests.swift in Sources */,
 				B3CE2A5AE59AD5180BF1B1A3 /* RecordingLifecycleAndPromptTests.swift in Sources */,
 				419D49EB7A0C9146DA0A9A97 /* SerialRunnerTests.swift in Sources */,
 				B393F8135CE951BFE04FCBF8 /* SessionStoreTests.swift in Sources */,
@@ -562,6 +575,7 @@
 			isa = PBXSourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				09A39943626BC151A75AAEB7 /* ADTS.swift in Sources */,
 				0CA859C228689E1BC692EA4B /* AudioCaptureService.swift in Sources */,
 				9613791A7D7D8C50E705134F /* AudioClip.swift in Sources */,
 				83A56B0B687658B341CD3297 /* ContentView.swift in Sources */,

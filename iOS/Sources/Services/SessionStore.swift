@@ -97,12 +97,11 @@ actor SessionStore {
                 switch segmentState {
                 case .recording:
                     // The app was killed mid-part. The part ends where its audio
-                    // does; without readable audio it was never recorded.
-                    let recorded = isDefinitelyEmpty ? nil : Self.recordedSeconds(fileURL)
-                    let startedAt = sessions[sessionIndex].segments[segmentIndex].startedAt
-                    sessions[sessionIndex].segments[segmentIndex].endedAt = startedAt.addingTimeInterval(recorded ?? 0)
-                    sessions[sessionIndex].segments[segmentIndex].state = recorded == nil ? .unavailable : .pending
-                    sessions[sessionIndex].segments[segmentIndex].lastError = recorded == nil ? "This segment was not recorded" : nil
+                    // does; without a whole frame it was never recorded.
+                    let segment = sessions[sessionIndex].segments[segmentIndex]
+                    // Unreadable now means unreadable later: nothing to send.
+                    let audio = recordedAudio(sessionID: sessions[sessionIndex].id, segment: segment)
+                    sessions[sessionIndex].segments[segmentIndex].end(recorded: audio ?? RecordedAudio(seconds: 0, frames: 0))
                     changed = true
                 case .transcribing:
                     sessions[sessionIndex].segments[segmentIndex].state = isDefinitelyEmpty ? .unavailable : .pending
@@ -130,10 +129,79 @@ actor SessionStore {
         return sessions
     }
 
-    /// Seconds of readable audio, or nil when there's none.
-    private static func recordedSeconds(_ url: URL) -> TimeInterval? {
-        guard let file = try? AVAudioFile(forReading: url), file.length > 0 else { return nil }
-        return Double(file.length) / file.processingFormat.sampleRate
+    /// Ends the live part at the last whole frame the recorder has written
+    /// and starts the next part in the same file. They share that frame: AAC
+    /// frames overlap when decoded, so each part's edge decodes cleanly. Nil
+    /// when the part isn't recording any more or nothing new is on disk. One
+    /// step in the store, so a pause or Stop can't end the part in between.
+    func rollOver(sessionID: UUID, partID: UUID) throws -> (session: RecordingSession, next: RecordingSession.Segment)? {
+        var session = try load(sessionID)
+        guard let index = session.segments.firstIndex(where: { $0.id == partID }),
+              session.segments[index].state == .recording,
+              let data = bytes(sessionID: sessionID, segment: session.segments[index])
+        else { return nil }
+        let part = session.segments[index]
+        let frames = ADTS.wholeFrames(in: data)
+        // A part after the first starts with the shared frame.
+        guard frames.count > (part.startByte == nil ? 1 : 2) else { return nil }
+        let start = part.startByte ?? 0
+        let endedAt = part.startedAt.addingTimeInterval(frames.seconds)
+        session.segments[index].endByte = start + frames.byteCount
+        session.segments[index].endedAt = endedAt
+        session.segments[index].state = .pending
+        session.segments[index].lastError = nil
+        let next = RecordingSession.Segment.following(
+            part, in: session,
+            at: start + frames.lastFrameStart,
+            startedAt: endedAt.addingTimeInterval(-frames.lastFrameSeconds)
+        )
+        session.segments.append(next)
+        return (try save(session), next)
+    }
+
+    /// The audio in the part so far; nil when its file exists but can't be
+    /// read.
+    func recordedAudio(sessionID: UUID, segment: RecordingSession.Segment) -> RecordedAudio? {
+        let url = audioURL(sessionID: sessionID, fileName: segment.fileName)
+        guard fileContentState(url) == .content else { return RecordedAudio(seconds: 0, frames: 0) }
+        if segment.startByte != nil || segment.endByte != nil {
+            return bytes(sessionID: sessionID, segment: segment).map {
+                let frames = ADTS.wholeFrames(in: $0)
+                return RecordedAudio(seconds: frames.seconds, frames: frames.count)
+            }
+        }
+        guard let file = try? AVAudioFile(forReading: url) else { return nil }
+        return RecordedAudio(seconds: Double(file.length) / file.processingFormat.sampleRate, frames: nil)
+    }
+
+    /// A file holding just this part's audio. A part that is a whole file
+    /// (a take with one part, or a recording from before takes) is the file
+    /// itself; a part of a longer take is copied out to a temporary file,
+    /// which the caller deletes.
+    func partAudio(sessionID: UUID, segment: RecordingSession.Segment) throws -> (url: URL, isCopy: Bool) {
+        let fileURL = audioURL(sessionID: sessionID, fileName: segment.fileName)
+        guard segment.startByte != nil || segment.endByte != nil else { return (fileURL, false) }
+        guard let data = bytes(sessionID: sessionID, segment: segment) else { throw CocoaError(.fileReadUnknown) }
+        let copy = fileManager.temporaryDirectory.appendingPathComponent("groqdictate-part-\(UUID().uuidString).aac")
+        try data.prefix(ADTS.wholeFrames(in: data).byteCount).write(to: copy)
+        return (copy, true)
+    }
+
+    private func bytes(sessionID: UUID, segment: RecordingSession.Segment) -> Data? {
+        guard let handle = try? FileHandle(forReadingFrom: audioURL(sessionID: sessionID, fileName: segment.fileName)) else {
+            return nil
+        }
+        defer { try? handle.close() }
+        do {
+            let start = segment.startByte ?? 0
+            try handle.seek(toOffset: UInt64(start))
+            if let end = segment.endByte {
+                return try handle.read(upToCount: max(0, end - start)) ?? Data()
+            }
+            return try handle.readToEnd() ?? Data()
+        } catch {
+            return nil
+        }
     }
 
     nonisolated func audioURL(sessionID: UUID, fileName: String) -> URL {

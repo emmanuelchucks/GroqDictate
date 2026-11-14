@@ -60,8 +60,9 @@ final class TranscriptCleanupTests: XCTestCase {
         let transcript = Self.transcript([
             (0, 4, " Can you check the build?"),
             (30, 60, " Thank you."),
-            (60, 62, " Thank you."),
-            (62, 66, " And the logs too."),
+            (60, 62, " Okay."),
+            (62, 64, " Thank you."),
+            (64, 66, " And the logs too."),
         ])
         var asked: [ClosedRange<Double>] = []
         let recovered = await TranscriptCleanup.cleaned(
@@ -72,11 +73,41 @@ final class TranscriptCleanupTests: XCTestCase {
                 return range.lowerBound < 40 ? " and the Wrangler config. " : "Thank you."
             }
         )
-        XCTAssertEqual(asked, [29.5...60, 60...62], "half a second either side, never into a neighbour")
-        XCTAssertEqual(recovered, "Can you check the build? and the Wrangler config. Thank you. And the logs too.")
+        XCTAssertEqual(asked, [29.5...60, 62...64], "half a second either side, never into a neighbour")
+        XCTAssertEqual(recovered, "Can you check the build? and the Wrangler config. Okay. Thank you. And the logs too.")
 
         let failed = await TranscriptCleanup.cleaned(transcript, hasSpeech: { _ in [true, true] }, retranscribe: { _ in nil })
         XCTAssertEqual(failed, transcript.text, "a failed second request changes nothing")
+    }
+
+    func testNeighbouringPhrasesOverAVoiceGoAsOneStretch() async {
+        let transcript = Self.transcript([
+            (0, 4, " Can you check the build?"),
+            (4, 5, " Thank you."),
+            (5, 6, " Thank you."),
+            (6, 7, " Thank you."),
+            (7, 10, " the global config."),
+        ])
+        var asked: [ClosedRange<Double>] = []
+        let cleaned = await TranscriptCleanup.cleaned(
+            transcript,
+            hasSpeech: { _ in [true, true, true] },
+            retranscribe: { range in
+                asked.append(range)
+                return " so the fixes you are suggesting to the"
+            }
+        )
+        XCTAssertEqual(asked, [4...7])
+        XCTAssertEqual(cleaned, "Can you check the build? so the fixes you are suggesting to the global config.")
+    }
+
+    func testWordsTheStretchCaughtFromANeighbourAreNotRepeated() async {
+        let transcript = Self.transcript([(0, 4, " Proceed with what you said is next also"), (4, 6, " Thank you.")])
+        let echoOnly = await TranscriptCleanup.cleaned(transcript, hasSpeech: { _ in [true] }, retranscribe: { _ in "also" })
+        XCTAssertEqual(echoOnly, transcript.text, "an answer that only repeats a neighbour leaves the phrase")
+
+        let more = await TranscriptCleanup.cleaned(transcript, hasSpeech: { _ in [true] }, retranscribe: { _ in "next also, and the tests." })
+        XCTAssertEqual(more, "Proceed with what you said is next also and the tests.")
     }
 
     private static func transcript(_ parts: [(Double, Double, String)]) -> GroqTranscript {
