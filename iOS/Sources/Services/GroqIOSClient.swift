@@ -132,11 +132,13 @@ struct GroqIOSClient {
         struct Response: Decodable {
             let text: String
             let segments: [TranscriptSegment]?
+            let duration: Double?
         }
         let response = try JSONDecoder().decode(Response.self, from: data)
         return GroqTranscript(
             text: response.text.trimmingCharacters(in: .whitespacesAndNewlines),
-            segments: response.segments ?? []
+            segments: response.segments ?? [],
+            duration: response.duration ?? 0
         )
     }
 

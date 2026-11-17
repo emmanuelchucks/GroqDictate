@@ -639,7 +639,7 @@ enum GroqAPI {
     static func extractTranscription(from data: Data) -> GroqTranscript? {
         guard let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else {
             return String(data: data, encoding: .utf8)
-                .map { GroqTranscript(text: $0.trimmingCharacters(in: .whitespacesAndNewlines), segments: []) }
+                .map { GroqTranscript(text: $0.trimmingCharacters(in: .whitespacesAndNewlines), segments: [], duration: 0) }
         }
 
         let segments = (json["segments"] as? [[String: Any]] ?? []).compactMap { segment -> TranscriptSegment? in
@@ -649,7 +649,8 @@ enum GroqAPI {
             return TranscriptSegment(start: start, end: end, text: text)
         }
         let text = (json["text"] as? String) ?? segments.map(\.text).joined()
-        return GroqTranscript(text: text.trimmingCharacters(in: .whitespacesAndNewlines), segments: segments)
+        let duration = (json["duration"] as? NSNumber)?.doubleValue ?? 0
+        return GroqTranscript(text: text.trimmingCharacters(in: .whitespacesAndNewlines), segments: segments, duration: duration)
     }
 
     static func mapHTTPError(status: Int, headers: HTTPURLResponse, body: Data) -> TranscriptionError {

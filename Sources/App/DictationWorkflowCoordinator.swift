@@ -427,7 +427,7 @@ final class DictationWorkflowCoordinator {
         Task { @MainActor [weak self] in
             let cleaned = await TranscriptCleanup.cleaned(
                 transcript,
-                hasSpeech: { ranges in await SpeechCheck.speech(in: ranges, fileURL: audioURL) },
+                voicedSeconds: { ranges in await SpeechCheck.voicedSeconds(in: ranges, fileURL: audioURL) },
                 retranscribe: { range in
                     guard let clip = await AudioClip.m4a(from: audioURL, range: range) else { return nil }
                     defer { try? FileManager.default.removeItem(at: clip) }

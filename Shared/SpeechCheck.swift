@@ -16,36 +16,39 @@ enum SpeechCheck {
     /// user's recordings (docs/transcript-cleanup.md).
     static let threshold = 0.5
 
-    /// Whisper's segment timings are loose, so voice within half a second of
-    /// a segment counts as under it. It only ever errs toward keeping text.
-    static let margin = 0.5
-
-    /// Seconds Silero hears before a stretch's margin starts. With less, it
+    /// Seconds Silero hears before a stretch starts. With less, it
     /// answered differently from a whole-file pass on more of the user's
     /// recordings (docs/transcript-cleanup.md).
     static let preroll = 10.0
 
-    static func hasSpeech(in range: ClosedRange<Double>, windows: [SpeechWindow], threshold: Double = threshold) -> Bool {
-        let lower = range.lowerBound - margin, upper = range.upperBound + margin
-        return windows.contains { $0.end > lower && $0.start < upper && $0.confidence >= threshold }
+    /// Seconds of voice in the range; with no windows there (a range past
+    /// the audio's end), all of it counts, erring toward keeping and
+    /// resending text.
+    static func voicedSeconds(in range: ClosedRange<Double>, windows: [SpeechWindow], threshold: Double = threshold) -> Double {
+        let lower = range.lowerBound, upper = range.upperBound
+        guard !windows.isEmpty else { return upper - lower }
+        return windows
+            .filter { $0.confidence >= threshold }
+            .map { max(0, min($0.end, upper) - max($0.start, lower)) }
+            .reduce(0, +)
     }
 
     #if canImport(CoreML)
-    /// For each range, whether anyone speaks in it; nil when the audio or the
+    /// For each range, seconds of voice in it; nil when the audio or the
     /// model can't be read, and then nothing is removed.
-    static func speech(in ranges: [ClosedRange<Double>], fileURL: URL) async -> [Bool]? {
+    static func voicedSeconds(in ranges: [ClosedRange<Double>], fileURL: URL) async -> [Double]? {
         await Task.detached(priority: .userInitiated) {
             guard let file = try? AVAudioFile(forReading: fileURL) else { return nil }
             let duration = Double(file.length) / file.processingFormat.sampleRate
-            var answers: [Bool] = []
+            var answers: [Double] = []
             for range in ranges {
                 // Silero carries state from window to window, so it starts a
                 // few seconds early, on the same 256 ms grid as a whole-file
                 // pass, to answer as it would there.
-                let lower = Silero.gridStart(at: max(0, range.lowerBound - margin - preroll))
-                let upper = max(lower, min(duration, range.upperBound + margin + 1))
+                let lower = Silero.gridStart(at: max(0, range.lowerBound - preroll))
+                let upper = max(lower, min(duration, range.upperBound + 1))
                 guard let windows = await windows(in: file, from: lower, to: upper) else { return nil }
-                answers.append(windows.isEmpty || hasSpeech(in: range, windows: windows))
+                answers.append(voicedSeconds(in: range, windows: windows))
             }
             return answers
         }.value

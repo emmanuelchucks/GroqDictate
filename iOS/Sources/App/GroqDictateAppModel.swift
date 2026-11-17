@@ -499,16 +499,16 @@ final class GroqDictateAppModel: ObservableObject {
                     text = await TranscriptCleanup.cleaned(
                         result,
                         prompt: prompt,
-                        hasSpeech: { ranges in
+                        voicedSeconds: { ranges in
                             let started = ProcessInfo.processInfo.systemUptime
-                            let speech = await SpeechCheck.speech(in: ranges, fileURL: audioURL)
-                            // code: segments with no voice under them, or -1 when the audio couldn't be read.
+                            let voice = await SpeechCheck.voicedSeconds(in: ranges, fileURL: audioURL)
+                            // code: stretches with no voice in them, or -1 when the audio couldn't be read.
                             TimingDiagnostics.shared.record(
                                 .speechChecked, sessionID: sessionID,
                                 elapsedSeconds: ProcessInfo.processInfo.systemUptime - started,
-                                code: speech.map { $0.filter { !$0 }.count } ?? -1
+                                code: voice.map { $0.filter { $0 == 0 }.count } ?? -1
                             )
-                            return speech
+                            return voice
                         },
                         retranscribe: { [client, apiKey] range in
                             guard let clip = await AudioClip.m4a(from: audioURL, range: range) else { return nil }

@@ -8,10 +8,12 @@ struct TranscriptSegment: Decodable, Equatable {
     let text: String
 }
 
-/// Groq's text and the segments it is made of.
+/// Groq's text, the segments it is made of, and the audio's length in
+/// seconds (0 when Groq didn't say).
 struct GroqTranscript: Equatable {
     let text: String
     let segments: [TranscriptSegment]
+    let duration: Double
 }
 
 /// Whisper writes stock phrases over stretches with no speech. A segment is
@@ -51,6 +53,31 @@ enum PhantomPhrases {
         return covered[words.count]
     }
 
+    /// The text without listed phrases standing as sentences of their own at
+    /// its start or end, so a second request's answer doesn't bring a phantom
+    /// back with the user's words. "Thank you for the fix." stays.
+    static func trimmed(_ text: String) -> String {
+        var tokens = text.split(whereSeparator: \.isWhitespace).map(String.init)
+        let endsSentence = { (token: String) in token.last.map { ".!?".contains($0) } ?? false }
+        func isPhrase(_ chunk: ArraySlice<String>) -> Bool {
+            let words = chunk.flatMap { normalizedWords($0) }
+            return words.isEmpty || phrases.contains(words)
+        }
+        func lengthAtEnd() -> Int? {
+            (1...min(6, tokens.count)).reversed().first { count in
+                isPhrase(tokens.suffix(count)) && (count == tokens.count || endsSentence(tokens[tokens.count - count - 1]))
+            }
+        }
+        func lengthAtStart() -> Int? {
+            (1...min(6, tokens.count)).reversed().first { count in
+                isPhrase(tokens.prefix(count)) && (count == tokens.count || endsSentence(tokens[count - 1]))
+            }
+        }
+        while !tokens.isEmpty, let count = lengthAtEnd() { tokens.removeLast(count) }
+        while !tokens.isEmpty, let count = lengthAtStart() { tokens.removeFirst(count) }
+        return tokens.joined(separator: " ")
+    }
+
     /// Lowercased words without punctuation. Whisper's misspelt "thank"
     /// (Tthank, T'hank, Tchank, Ttank) reads as "thank".
     static func normalizedWords(_ text: String) -> [String] {
@@ -71,8 +98,50 @@ enum TranscriptCleanup {
     static func candidates(in segments: [TranscriptSegment], prompt: String = "") -> [Int] {
         segments.indices.filter { index in
             let text = segments[index].text.trimmingCharacters(in: .whitespacesAndNewlines)
-            return PhantomPhrases.matchesWhole(text) || (text.count >= 20 && prompt.contains(text))
+            return !segments[index].text.isEmpty
+                && (PhantomPhrases.matchesWhole(text) || (text.count >= 20 && prompt.contains(text)))
         }
+    }
+
+    /// Whisper sometimes writes a word or two ("you.") over seconds of the
+    /// user's speech, or skips it with no segment at all, often at the end of
+    /// a part (docs/transcript-cleanup.md). His dictation runs at 1.6 words
+    /// per second of voice or more, so a stretch with fewer, and at least two
+    /// seconds of voice, is sent again on its own.
+    static let fewWordsMinimumSeconds = 2.0
+    static let fewWordsPerSecond = 1.5
+
+    /// Whisper's segment timings are loose, so voice within half a second of
+    /// a candidate counts as under it. Only removal uses it: it errs toward
+    /// keeping text, but would make a slow segment look slower than it is.
+    static let timingMargin = 0.5
+
+    /// Second requests per part, the ones over the most voice first; Groq
+    /// allows 20 requests a minute and the next part needs one.
+    static let maximumResends = 5
+
+    static func hasFewWords(_ segment: TranscriptSegment, voicedSeconds: Double) -> Bool {
+        voicedSeconds >= fewWordsMinimumSeconds && Double(wordCount(segment.text)) < voicedSeconds * fewWordsPerSecond
+    }
+
+    /// The segments with an empty one in every gap of two seconds or more,
+    /// including before the first and after the last, so a skipped stretch
+    /// is checked like a segment.
+    static func filling(gapsIn segments: [TranscriptSegment], duration: Double) -> [TranscriptSegment] {
+        var filled: [TranscriptSegment] = []
+        var covered = 0.0
+        for segment in segments + [TranscriptSegment(start: duration, end: duration, text: "")] {
+            if segment.start - covered >= fewWordsMinimumSeconds {
+                filled.append(TranscriptSegment(start: covered, end: segment.start, text: ""))
+            }
+            filled.append(segment)
+            covered = max(covered, segment.end)
+        }
+        return Array(filled.dropLast())
+    }
+
+    static func wordCount(_ text: String) -> Int {
+        PhantomPhrases.normalizedWords(text).count
     }
 
     static func text(of segments: [TranscriptSegment], removing removed: Set<Int>) -> String {
@@ -83,40 +152,59 @@ enum TranscriptCleanup {
             .trimmingCharacters(in: .whitespacesAndNewlines)
     }
 
-    /// Removes candidates the speech check finds no speech under. `hasSpeech`
-    /// gets the candidates' time ranges and answers for each, in order, or nil
-    /// when it couldn't check.
+    /// Removes candidates with no voice under them, and sends a stretch to
+    /// Groq again when its text may be missing the user's words: a candidate
+    /// with a voice under it, or a segment or gap with fewer words than
+    /// seconds of voice. `voicedSeconds` gets the stretches' time ranges and
+    /// answers for each, in order, or nil when it couldn't check.
     ///
-    /// A candidate with a voice under it can be Whisper replacing real words
-    /// with a stock phrase: sent alone, the stretch gave the user's words back
-    /// in 7 of 34 such cases (docs/transcript-cleanup.md). `retranscribe`
-    /// sends one stretch to Groq again; its text replaces the phrase only when
-    /// it is more than phantom phrases, and nil leaves the phrase as it was.
-    /// Voiced candidates next to each other go as one stretch, since separate
-    /// stretches overlap and gave the same words back twice.
+    /// A phantom phrase with a voice under it can be Whisper replacing real
+    /// words: sent alone, the stretch gave the user's words back in 7 of 34
+    /// such cases (docs/transcript-cleanup.md). The answer replaces the
+    /// stretch's text only when it has more of the user's words than the
+    /// stretch had; nil leaves the text as it was. Stretches next to each
+    /// other go as one, since separate stretches overlap and gave the same
+    /// words back twice.
     ///
     /// Groq's text comes back unchanged unless something changed, and when
     /// the segments don't add up to it.
     static func cleaned(
         _ transcript: GroqTranscript,
         prompt: String = "",
-        hasSpeech: ([ClosedRange<Double>]) async -> [Bool]?,
+        voicedSeconds: ([ClosedRange<Double>]) async -> [Double]?,
         retranscribe: (ClosedRange<Double>) async -> String? = { _ in nil }
     ) async -> String {
-        var segments = transcript.segments
-        let candidates = candidates(in: segments, prompt: prompt)
-        guard !candidates.isEmpty, text(of: segments, removing: []) == transcript.text else { return transcript.text }
-        let ranges = candidates.map { segments[$0].start...max(segments[$0].start, segments[$0].end) }
-        guard let speech = await hasSpeech(ranges) else { return transcript.text }
-        var removed = Set(zip(candidates, speech).filter { !$0.1 }.map(\.0))
+        var segments = filling(gapsIn: transcript.segments, duration: transcript.duration)
+        guard text(of: segments, removing: []) == transcript.text else { return transcript.text }
+        let removable = Set(candidates(in: segments, prompt: prompt))
+        let checked = segments.indices.filter { index in
+            let segment = segments[index]
+            return removable.contains(index) || hasFewWords(segment, voicedSeconds: segment.end - segment.start)
+        }
+        guard !checked.isEmpty else { return transcript.text }
+        let ranges = checked.map { index in
+            let margin = removable.contains(index) ? timingMargin : 0
+            return (segments[index].start - margin)...(max(segments[index].start, segments[index].end) + margin)
+        }
+        guard let voice = await voicedSeconds(ranges), voice.count == checked.count else { return transcript.text }
+        var removed = Set(zip(checked, voice).filter { removable.contains($0.0) && $0.1 == 0 }.map(\.0))
+        let resend = zip(checked, voice).filter { index, seconds in
+            removable.contains(index) ? seconds > 0 : hasFewWords(segments[index], voicedSeconds: seconds)
+        }
+        let voiceUnder = Dictionary(uniqueKeysWithValues: resend)
+        let chosen = runs(of: resend.map(\.0))
+            .sorted { $0.map { voiceUnder[$0] ?? 0 }.reduce(0, +) > $1.map { voiceUnder[$0] ?? 0 }.reduce(0, +) }
+            .prefix(maximumResends)
+            .sorted { $0.lowerBound < $1.lowerBound }
         var replaced = false
-        for run in runs(of: zip(candidates, speech).filter(\.1).map(\.0)) {
+        for run in chosen {
             let kept = segments.indices.filter { !removed.contains($0) }
             let before = kept.filter { $0 < run.lowerBound }.map { segments[$0].text }.joined()
             let after = kept.filter { $0 > run.upperBound }.map { segments[$0].text }.joined()
             let answer = await retranscribe(stretch(of: run, in: segments)) ?? ""
-            let words = trimmingRepeats(of: answer, before: before, after: after)
-            guard !PhantomPhrases.matchesWhole(words) else { continue }
+            let words = PhantomPhrases.trimmed(trimmingRepeats(of: answer, before: before, after: after))
+            let userWords = run.filter { !removable.contains($0) }.map { wordCount(segments[$0].text) }.reduce(0, +)
+            guard !PhantomPhrases.matchesWhole(words), wordCount(words) > userWords else { continue }
             let first = segments[run.lowerBound]
             segments[run.lowerBound] = TranscriptSegment(start: first.start, end: first.end, text: " " + words)
             removed.formUnion(run.dropFirst())
@@ -139,12 +227,13 @@ enum TranscriptCleanup {
     }
 
     /// The run's time with half a second either side for Whisper's loose
-    /// timings, but not into its neighbours, whose words are already there.
+    /// timings, but not into neighbours with words, which are already there.
     static func stretch(of run: ClosedRange<Int>, in segments: [TranscriptSegment]) -> ClosedRange<Double> {
         let first = segments[run.lowerBound], last = segments[run.upperBound]
-        let lower = max(0, first.start - 0.5, run.lowerBound > 0 ? segments[run.lowerBound - 1].end : 0)
-        var upper = last.end + 0.5
-        if run.upperBound + 1 < segments.count { upper = min(upper, segments[run.upperBound + 1].start) }
+        let previous = segments[..<run.lowerBound].last { !$0.text.isEmpty }
+        let next = segments[(run.upperBound + 1)...].first { !$0.text.isEmpty }
+        let lower = max(0, first.start - timingMargin, previous?.end ?? 0)
+        let upper = min(last.end + timingMargin, next?.start ?? .infinity)
         return lower...max(upper, lower + 1)
     }
 
