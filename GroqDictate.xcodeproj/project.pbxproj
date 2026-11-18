@@ -49,6 +49,7 @@
 		95AF18D03D3D393DFF3C38FD /* SetupWindowCoordinatorTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1B706011927C316F71EA16F1 /* SetupWindowCoordinatorTests.swift */; };
 		9613791A7D7D8C50E705134F /* AudioClip.swift in Sources */ = {isa = PBXBuildFile; fileRef = E654E053B5933BAAF408AAB4 /* AudioClip.swift */; };
 		97851B7C1492ACC48147EA0E /* silero-vad.mlmodelc in Resources */ = {isa = PBXBuildFile; fileRef = A4832E97D81F546ED8792710 /* silero-vad.mlmodelc */; };
+		98338190BF9324093AE07730 /* AudioExport.swift in Sources */ = {isa = PBXBuildFile; fileRef = 86EDF1BB1FA5B5B290C8296A /* AudioExport.swift */; };
 		990C6E591524ECD25AF8A277 /* RecordingSession.swift in Sources */ = {isa = PBXBuildFile; fileRef = 387EBB83CFCBC3FD53F74887 /* RecordingSession.swift */; };
 		A195DEB2BD188E683551861C /* SessionStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = 71FFD4D11D3D8C7EB99FAC38 /* SessionStore.swift */; };
 		B05B65EA4AC165118DD4629D /* SetupWindowCoordinator.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5AC98FC2E5761699FE2F13BD /* SetupWindowCoordinator.swift */; };
@@ -71,6 +72,7 @@
 		DACE024458013D9CA8EC4894 /* AboutDialog.swift in Sources */ = {isa = PBXBuildFile; fileRef = 98175286F0C06E36428CBACC /* AboutDialog.swift */; };
 		DB2158EA3753554308C7ED13 /* AppStrings.swift in Sources */ = {isa = PBXBuildFile; fileRef = 946C9865B161C71D4E3DC512 /* AppStrings.swift */; };
 		E0076DA83F9D1B9F9BF3BC9B /* RecordingLifecycle.swift in Sources */ = {isa = PBXBuildFile; fileRef = 305C6103F6AC6530027112F9 /* RecordingLifecycle.swift */; };
+		EF0377FBDA1106E301F6EF1D /* DeleteConfirmation.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0A26C333E13D74C88F1375ED /* DeleteConfirmation.swift */; };
 		F0DF931D6BBBBD6FCD1F92A1 /* GroqModelValidator.swift in Sources */ = {isa = PBXBuildFile; fileRef = C90A2F23C886355A172FD65B /* GroqModelValidator.swift */; };
 /* End PBXBuildFile section */
 
@@ -96,6 +98,7 @@
 		00DE7481DB590DF65091BA6E /* SetupWindow.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SetupWindow.swift; sourceTree = "<group>"; };
 		0353A3746920CA6925A48642 /* SerialRunnerTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SerialRunnerTests.swift; sourceTree = "<group>"; };
 		05DB0DE76801ADB10FD9D67C /* main.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = main.swift; sourceTree = "<group>"; };
+		0A26C333E13D74C88F1375ED /* DeleteConfirmation.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DeleteConfirmation.swift; sourceTree = "<group>"; };
 		0C79A48C3E195CFE84963F29 /* IOSKeychainStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = IOSKeychainStore.swift; sourceTree = "<group>"; };
 		0E6FC2C23088EF6AA256D064 /* SerialRunner.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SerialRunner.swift; sourceTree = "<group>"; };
 		145F3072653C303545EC06CB /* RecordingLifecycleAndPromptTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RecordingLifecycleAndPromptTests.swift; sourceTree = "<group>"; };
@@ -124,6 +127,7 @@
 		7AF6988BD4ABB0F49E6EEA14 /* TimingDiagnostics.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TimingDiagnostics.swift; sourceTree = "<group>"; };
 		847D12320F149726245D2221 /* Config.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Config.swift; sourceTree = "<group>"; };
 		86B2667019D21508CBD54339 /* GroqDictateIOSApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GroqDictateIOSApp.swift; sourceTree = "<group>"; };
+		86EDF1BB1FA5B5B290C8296A /* AudioExport.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AudioExport.swift; sourceTree = "<group>"; };
 		8BCFC4F4AE98000D2AA0639A /* GroqDictateIOS.app */ = {isa = PBXFileReference; includeInIndex = 0; lastKnownFileType = wrapper.application; path = GroqDictateIOS.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		8BF83D48846C82B2117C8E28 /* KeychainHelper.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = KeychainHelper.swift; sourceTree = "<group>"; };
 		8FF9DB77E84DAB948C897224 /* FloatingPanel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FloatingPanel.swift; sourceTree = "<group>"; };
@@ -238,6 +242,7 @@
 			children = (
 				D6438AB14AD4637CE36A50A8 /* ADTS.swift */,
 				BD3423C60FAF9E052C7014FE /* AudioCaptureService.swift */,
+				86EDF1BB1FA5B5B290C8296A /* AudioExport.swift */,
 				6DEEE8E2CED9BE86848C602D /* GroqIOSClient.swift */,
 				0C79A48C3E195CFE84963F29 /* IOSKeychainStore.swift */,
 				71FFD4D11D3D8C7EB99FAC38 /* SessionStore.swift */,
@@ -351,6 +356,7 @@
 			isa = PBXGroup;
 			children = (
 				B8AFBADD28B120FFF5999E29 /* ContentView.swift */,
+				0A26C333E13D74C88F1375ED /* DeleteConfirmation.swift */,
 				646F95D12A4D506850C709F0 /* SessionDetailView.swift */,
 				A42E63B44CC5C2DAD5AC7322 /* SettingsView.swift */,
 			);
@@ -578,7 +584,9 @@
 				09A39943626BC151A75AAEB7 /* ADTS.swift in Sources */,
 				0CA859C228689E1BC692EA4B /* AudioCaptureService.swift in Sources */,
 				9613791A7D7D8C50E705134F /* AudioClip.swift in Sources */,
+				98338190BF9324093AE07730 /* AudioExport.swift in Sources */,
 				83A56B0B687658B341CD3297 /* ContentView.swift in Sources */,
+				EF0377FBDA1106E301F6EF1D /* DeleteConfirmation.swift in Sources */,
 				C1797136EC008188D0BABCCD /* GroqDictateAppModel.swift in Sources */,
 				5B1FCEE75BB5F29343889699 /* GroqDictateIOSApp.swift in Sources */,
 				30CB4DC95B186C7C5F4A448C /* GroqIOSClient.swift in Sources */,

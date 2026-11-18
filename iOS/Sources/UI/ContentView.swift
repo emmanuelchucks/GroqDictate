@@ -51,20 +51,14 @@ struct ContentView: View {
                 .sheet(isPresented: $showingSettings) {
                     SettingsView(model: model)
                 }
-                .confirmationDialog(
-                    IOSAppStrings.Recording.deleteTitle,
+                .deleteConfirmation(
                     isPresented: Binding(
                         get: { sessionToDelete != nil },
                         set: { if !$0 { sessionToDelete = nil } }
                     ),
-                    titleVisibility: .visible,
                     presenting: sessionToDelete
                 ) { session in
-                    Button(IOSAppStrings.Recording.delete, role: .destructive) {
-                        Task { await model.delete(session.id) }
-                    }
-                } message: { _ in
-                    Text(IOSAppStrings.Recording.deleteMessage)
+                    Task { await model.delete(session.id) }
                 }
                 .alert(model.errorMessage ?? "Something went wrong", isPresented: Binding(
                     get: { model.errorMessage != nil },

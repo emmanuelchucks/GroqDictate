@@ -74,7 +74,8 @@ struct SessionDetailView: View {
                                 }
                                 Spacer()
                                 if take.state != .unavailable, let url = audioURLs[take.fileName] {
-                                    ShareLink(item: url) {
+                                    let name = SharedAudio.name(recordedAt: session.createdAt, take: number + 1, of: takes.count)
+                                    ShareLink(item: SharedAudio(source: url, name: name), preview: SharePreview(name)) {
                                         Image(systemName: "square.and.arrow.up")
                                     }
                                     .accessibilityLabel("Share \(title)")
@@ -97,17 +98,9 @@ struct SessionDetailView: View {
                         }
                     }
                 }
-                .confirmationDialog(
-                    IOSAppStrings.Recording.deleteTitle,
-                    isPresented: $confirmingDelete,
-                    titleVisibility: .visible
-                ) {
-                    Button(IOSAppStrings.Recording.delete, role: .destructive) {
-                        dismiss()
-                        Task { await model.delete(sessionID) }
-                    }
-                } message: {
-                    Text(IOSAppStrings.Recording.deleteMessage)
+                .deleteConfirmation(isPresented: $confirmingDelete, presenting: sessionID) { id in
+                    dismiss()
+                    Task { await model.delete(id) }
                 }
                 .task(id: session.updatedAt) {
                     var values: [String: URL] = [:]

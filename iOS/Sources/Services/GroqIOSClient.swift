@@ -197,13 +197,9 @@ struct GroqIOSClient {
         guard fileURL.pathExtension == "aac" else { return fileURL }
         let output = FileManager.default.temporaryDirectory
             .appendingPathComponent("groqdictate-ios-\(UUID().uuidString).m4a")
-        guard let export = AVAssetExportSession(asset: AVURLAsset(url: fileURL), presetName: AVAssetExportPresetPassthrough)
-        else { throw ClientError.unreadableAudio }
-        export.outputURL = output
-        export.outputFileType = .m4a
-        await export.export()
-        guard export.status == .completed else {
-            try? FileManager.default.removeItem(at: output)
+        do {
+            try await AudioExport.m4a(from: fileURL, to: output)
+        } catch {
             throw ClientError.unreadableAudio
         }
         return output
