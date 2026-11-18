@@ -44,6 +44,12 @@ struct SettingsView: View {
                         .font(.footnote)
                         .foregroundStyle(.secondary)
                 }
+
+                Section {
+                    LabeledContent("Build", value: Self.build)
+                        .font(.footnote)
+                        .foregroundStyle(.secondary)
+                }
             }
             .navigationTitle("Settings")
             .toolbar {
@@ -71,6 +77,15 @@ struct SettingsView: View {
             }
         }
     }
+
+    /// The build number and the commit it was built from, when the build
+    /// passed them (GIT_COMMIT and CURRENT_PROJECT_VERSION).
+    private static let build: String = {
+        let info = Bundle.main.infoDictionary ?? [:]
+        let number = info["CFBundleVersion"] as? String ?? "?"
+        let commit = info["GitCommit"] as? String ?? ""
+        return commit.isEmpty ? number : "\(number) (\(commit))"
+    }()
 
     private var hasChanges: Bool {
         draftAPIKey.trimmingCharacters(in: .whitespacesAndNewlines) != model.apiKey
