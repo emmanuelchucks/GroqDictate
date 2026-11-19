@@ -181,10 +181,12 @@ final class GroqDictateAppModel: ObservableObject {
     }
 
     /// Finishes a copy iOS refused while the app was in the background.
+    /// Called as the app comes back, when iOS can still report it as
+    /// inactive, so it says it's in front rather than asking iOS.
     func copyTranscriptRefusedInBackground() {
         guard let sessionID = uncopiedSessionID, let session = session(id: sessionID) else { return }
         uncopiedSessionID = nil
-        copyTranscriptAutomaticallyIfComplete(session)
+        copyTranscriptAutomaticallyIfComplete(session, isInFront: true)
     }
 
     func prepareForVisibleApp() async {
@@ -581,13 +583,13 @@ final class GroqDictateAppModel: ObservableObject {
     /// notification (sound or vibration, plus a banner) says the text is ready.
     /// iOS may refuse a background pasteboard write; the change count shows
     /// whether it took, and if not, the copy happens when the app comes back.
-    private func copyTranscriptAutomaticallyIfComplete(_ session: RecordingSession) {
+    private func copyTranscriptAutomaticallyIfComplete(_ session: RecordingSession, isInFront: Bool? = nil) {
         guard let transcript = Self.automaticClipboardText(for: session, fixes: spellingFixes) else { return }
         let pasteboard = UIPasteboard.general
         let previousChangeCount = pasteboard.changeCount
         pasteboard.string = transcript
         let copied = pasteboard.changeCount != previousChangeCount
-        let isActive = UIApplication.shared.applicationState == .active
+        let isActive = isInFront ?? (UIApplication.shared.applicationState == .active)
         if copied {
             copiedSessionID = session.id
             clipboardCopy = ClipboardCopy(sessionID: session.id, changeCount: pasteboard.changeCount)
