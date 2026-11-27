@@ -1,4 +1,5 @@
 import SwiftUI
+import UIKit
 import UserNotifications
 
 @main
@@ -15,22 +16,21 @@ struct GroqDictateIOSApp: App {
         WindowGroup {
             ContentView(model: model)
                 .task { await model.prepareForVisibleApp() }
+                .onReceive(NotificationCenter.default.publisher(for: UIApplication.didBecomeActiveNotification)) { _ in
+                    model.appDidBecomeActive()
+                }
         }
         .onChange(of: scenePhase) { _, phase in
             switch phase {
-            case .active: TimingDiagnostics.shared.record(.active)
-            case .inactive: TimingDiagnostics.shared.record(.inactive)
-            case .background: TimingDiagnostics.shared.record(.background)
-            @unknown default: break
-            }
-            switch phase {
             case .active:
-                Task { await model.prepareForVisibleApp() }
-                model.resumeAfterReturningToApp()
-                model.copyTranscriptRefusedInBackground()
-                model.clearTranscriptNotifications()
-            case .background: model.appDidEnterBackground()
-            default: break
+                TimingDiagnostics.shared.record(.active)
+            case .inactive:
+                TimingDiagnostics.shared.record(.inactive)
+            case .background:
+                TimingDiagnostics.shared.record(.background)
+                model.appDidEnterBackground()
+            @unknown default:
+                break
             }
         }
     }
@@ -38,7 +38,7 @@ struct GroqDictateIOSApp: App {
 
 /// iOS asks the app whether to show its own notification while the app
 /// still counts as in front (for a moment after the user switches away),
-/// and shows nothing unless told to.
+/// and shows nothing unless told to. Skip if the app is already active again.
 final class TranscriptNotifications: NSObject, UNUserNotificationCenterDelegate {
     static let shared = TranscriptNotifications()
 
@@ -46,6 +46,7 @@ final class TranscriptNotifications: NSObject, UNUserNotificationCenterDelegate 
         _ center: UNUserNotificationCenter,
         willPresent notification: UNNotification
     ) async -> UNNotificationPresentationOptions {
-        [.banner, .list, .sound]
+        let isActive = await MainActor.run { UIApplication.shared.applicationState == .active }
+        return isActive ? [] : [.banner, .list, .sound]
     }
 }

@@ -32,15 +32,17 @@ final class GroqDictateAppModel: ObservableObject {
     private var elapsedTask: Task<Void, Never>?
     private var interruptionFinalizationTask: Task<Void, Never>?
     private var stopUptimes: [UUID: TimeInterval] = [:]
-    private var uncopiedSessionID: UUID?
+    private var pendingClipboardCopy: PendingClipboardCopy?
+    private var notifiedPendingSessionID: UUID?
     private var hasRestored = false
-    private var isRestoring = false
+    private var restorationTask: Task<Void, Never>?
     /// Five minutes; launching with `-part-seconds N` shortens it for device tests.
     private let segmentDuration: Duration = {
         let override = UserDefaults.standard.double(forKey: "part-seconds")
         return .seconds(override > 0 ? max(10, override) : 5 * 60)
     }()
     private static let spellingFixesDefaultsKey = "spelling-fixes"
+    private static let pendingClipboardCopyDefaultsKey = "pending-clipboard-copy"
 
     init() {
         do {
@@ -52,6 +54,7 @@ final class GroqDictateAppModel: ObservableObject {
         let fixesText = UserDefaults.standard.string(forKey: Self.spellingFixesDefaultsKey) ?? ""
         spellingFixesText = fixesText
         spellingFixes = SpellingFixes(fixesText)
+        pendingClipboardCopy = PendingClipboardCopy.load(from: .standard, key: Self.pendingClipboardCopyDefaultsKey)
         capture.onInterruption = { [weak self] event in
             self?.handleInterruption(event)
         }
@@ -135,6 +138,7 @@ final class GroqDictateAppModel: ObservableObject {
     func copyTranscript(_ session: RecordingSession) {
         UIPasteboard.general.string = text(of: session)
         clipboardCopy = ClipboardCopy(sessionID: session.id, changeCount: UIPasteboard.general.changeCount)
+        clearPendingClipboardCopy()
     }
 
     /// Groq's text before cleaning, for recovering a wrong removal.
@@ -142,6 +146,7 @@ final class GroqDictateAppModel: ObservableObject {
         guard let original = session.originalTranscript else { return }
         UIPasteboard.general.string = original
         clipboardCopy = nil
+        clearPendingClipboardCopy()
     }
 
     /// True until anything else is copied; the change count says so without
@@ -160,6 +165,10 @@ final class GroqDictateAppModel: ObservableObject {
             try await store.delete(sessionID)
             sessions.removeAll { $0.id == sessionID }
             if stoppedSessionID == sessionID { stoppedSessionID = nil }
+            if pendingClipboardCopy?.sessionID == sessionID {
+                clearPendingClipboardCopy()
+                clearTranscriptNotifications()
+            }
         } catch {
             errorMessage = "Couldn't delete the recording"
         }
@@ -180,39 +189,47 @@ final class GroqDictateAppModel: ObservableObject {
         resume(reportsFailure: false)
     }
 
-    /// Finishes a copy iOS refused while the app was in the background.
-    /// Called as the app comes back, when iOS can still report it as
-    /// inactive, so it says it's in front rather than asking iOS.
-    func copyTranscriptRefusedInBackground() {
-        guard let sessionID = uncopiedSessionID, let session = session(id: sessionID) else { return }
-        uncopiedSessionID = nil
-        copyTranscriptAutomaticallyIfComplete(session, isInFront: true)
+    /// Runs on `UIApplication.didBecomeActiveNotification`, where iOS
+    /// guarantees `applicationState == .active` so pasteboard writes take.
+    func appDidBecomeActive() {
+        clearTranscriptNotifications()
+        resumeAfterReturningToApp()
+        if hasRestored {
+            copyPendingTranscriptIfActive()
+        } else {
+            Task { await prepareForVisibleApp() }
+        }
     }
 
     func prepareForVisibleApp() async {
         guard UIApplication.shared.applicationState == .active else { return }
+        clearTranscriptNotifications()
         await prepare()
+        copyPendingTranscriptIfActive()
     }
 
     func appDidEnterBackground() {
-        if stoppedSession?.state != .processing {
+        if lifecycle != .stopping, stoppedSession?.state != .processing {
             stoppedSessionID = nil
             copiedSessionID = nil
         }
     }
 
     private func prepare() async {
-        while isRestoring {
-            try? await Task.sleep(for: .milliseconds(50))
+        if let restorationTask {
+            await restorationTask.value
+            return
         }
         guard !hasRestored else { return }
-        isRestoring = true
-        defer { isRestoring = false }
-
-        TimingDiagnostics.shared.record(.restorationStarted)
-        await restore()
-        hasRestored = true
-        TimingDiagnostics.shared.record(.restorationFinished)
+        let task = Task { @MainActor in
+            TimingDiagnostics.shared.record(.restorationStarted)
+            await restore()
+            hasRestored = true
+            TimingDiagnostics.shared.record(.restorationFinished)
+        }
+        restorationTask = task
+        await task.value
+        restorationTask = nil
     }
 
     private func restore() async {
@@ -229,7 +246,8 @@ final class GroqDictateAppModel: ObservableObject {
     private func startSession(requestPermission: Bool = true) async {
         stoppedSessionID = nil
         copiedSessionID = nil
-        uncopiedSessionID = nil
+        clearPendingClipboardCopy()
+        clearTranscriptNotifications()
         // Asked here, while the user is looking at the app, without holding
         // up the recording; the transcript-ready notification is what tells
         // them the text is ready after they leave.
@@ -314,6 +332,7 @@ final class GroqDictateAppModel: ObservableObject {
         TimingDiagnostics.shared.record(.recordingStopped, sessionID: sessionID)
         stopUptimes[sessionID] = ProcessInfo.processInfo.systemUptime
         stoppedSessionID = sessionID
+        setPendingClipboardCopy(PendingClipboardCopy(sessionID: sessionID, stoppedAt: Date()))
         await endActiveSegment(sessionID: sessionID, sessionState: .processing)
         currentSessionID = nil
         elapsed = 0
@@ -560,9 +579,8 @@ final class GroqDictateAppModel: ObservableObject {
             replace(finished)
             // Only the recording just stopped goes to the clipboard; a retried
             // older one finishing later mustn't replace it.
-            if !isLive, sessionID == stoppedSessionID {
-                copyTranscriptAutomaticallyIfComplete(finished)
-                if finished.state == .complete, finished.transcript.isEmpty { returnCardToIdle(after: sessionID) }
+            if !isLive {
+                handlePendingClipboardCopy(for: finished)
             }
         } catch SessionStore.StoreError.sessionNotFound {
             // Deleted while queued.
@@ -578,38 +596,95 @@ final class GroqDictateAppModel: ObservableObject {
         return fixes.apply(to: session.transcript)
     }
 
-    /// The usual flow is Stop, then switch to the app to paste into, so this
-    /// often runs in the background. There an app's haptics don't play, so a
-    /// notification (sound or vibration, plus a banner) says the text is ready.
-    /// iOS may refuse a background pasteboard write; the change count shows
-    /// whether it took, and if not, the copy happens when the app comes back.
-    private func copyTranscriptAutomaticallyIfComplete(_ session: RecordingSession, isInFront: Bool? = nil) {
-        guard let transcript = Self.automaticClipboardText(for: session, fixes: spellingFixes) else { return }
-        let pasteboard = UIPasteboard.general
-        let previousChangeCount = pasteboard.changeCount
-        pasteboard.string = transcript
-        let copied = pasteboard.changeCount != previousChangeCount
-        let isActive = isInFront ?? (UIApplication.shared.applicationState == .active)
-        if copied {
-            copiedSessionID = session.id
-            clipboardCopy = ClipboardCopy(sessionID: session.id, changeCount: pasteboard.changeCount)
-            returnCardToIdle(after: session.id)
-        } else {
-            uncopiedSessionID = session.id
+    /// iOS silently drops `UIPasteboard.general` writes from the background
+    /// while still bumping `changeCount` locally, so only an active app writes
+    /// to the pasteboard. When transcription finishes while inactive or in the
+    /// background, keep the persisted pending copy and post "Tap to copy" so
+    /// returning to the app (even after a background kill) writes it cleanly.
+    private func handlePendingClipboardCopy(for session: RecordingSession) {
+        guard let pending = activePendingClipboardCopy(), pending.sessionID == session.id else { return }
+        guard session.state == .complete else { return }
+        guard let transcript = Self.automaticClipboardText(for: session, fixes: spellingFixes) else {
+            clearPendingClipboardCopy()
+            if stoppedSessionID == session.id { returnCardToIdle(after: session.id) }
+            return
         }
+        if UIApplication.shared.applicationState == .active {
+            writeTranscriptToClipboardWhileActive(session: session, transcript: transcript, diagnosticCode: 1)
+        } else if notifiedPendingSessionID != session.id {
+            notifiedPendingSessionID = session.id
+            TimingDiagnostics.shared.record(
+                .transcriptReady,
+                sessionID: session.id,
+                elapsedSeconds: stopUptimes.removeValue(forKey: session.id)
+                    .map { ProcessInfo.processInfo.systemUptime - $0 },
+                code: 10,
+                audioSeconds: session.duration
+            )
+            Self.postTranscriptReadyNotification(transcript: transcript)
+        }
+    }
+
+    private func copyPendingTranscriptIfActive() {
+        guard hasRestored, UIApplication.shared.applicationState == .active else { return }
+        guard let pending = activePendingClipboardCopy() else { return }
+        guard let session = session(id: pending.sessionID) else {
+            clearPendingClipboardCopy()
+            return
+        }
+        guard session.state == .complete else { return }
+        guard let transcript = Self.automaticClipboardText(for: session, fixes: spellingFixes) else {
+            clearPendingClipboardCopy()
+            if stoppedSessionID == session.id { returnCardToIdle(after: session.id) }
+            return
+        }
+        writeTranscriptToClipboardWhileActive(session: session, transcript: transcript, diagnosticCode: 2)
+    }
+
+    private func writeTranscriptToClipboardWhileActive(
+        session: RecordingSession,
+        transcript: String,
+        diagnosticCode: Int
+    ) {
+        let pasteboard = UIPasteboard.general
+        pasteboard.string = transcript
+        clearPendingClipboardCopy()
+        clearTranscriptNotifications()
+        stoppedSessionID = session.id
+        copiedSessionID = session.id
+        clipboardCopy = ClipboardCopy(sessionID: session.id, changeCount: pasteboard.changeCount)
+        returnCardToIdle(after: session.id)
         TimingDiagnostics.shared.record(
             .transcriptReady,
             sessionID: session.id,
             elapsedSeconds: stopUptimes.removeValue(forKey: session.id)
                 .map { ProcessInfo.processInfo.systemUptime - $0 },
-            code: (copied ? 1 : 0) + (isActive ? 0 : 10),
+            code: diagnosticCode,
             audioSeconds: session.duration
         )
-        if isActive {
-            UINotificationFeedbackGenerator().notificationOccurred(.success)
-        } else {
-            Self.postTranscriptReadyNotification(transcript: transcript, copied: copied)
+        UINotificationFeedbackGenerator().notificationOccurred(.success)
+    }
+
+    private func activePendingClipboardCopy(now: Date = Date()) -> PendingClipboardCopy? {
+        guard let pending = pendingClipboardCopy else { return nil }
+        if pending.isExpired(at: now) {
+            clearPendingClipboardCopy()
+            return nil
         }
+        return pending
+    }
+
+    private func setPendingClipboardCopy(_ pending: PendingClipboardCopy) {
+        pendingClipboardCopy = pending
+        notifiedPendingSessionID = nil
+        pending.save(to: .standard, key: Self.pendingClipboardCopyDefaultsKey)
+    }
+
+    private func clearPendingClipboardCopy() {
+        notifiedPendingSessionID = nil
+        guard pendingClipboardCopy != nil else { return }
+        pendingClipboardCopy = nil
+        PendingClipboardCopy.clear(from: .standard, key: Self.pendingClipboardCopyDefaultsKey)
     }
 
     /// Results show on the card briefly; the list row keeps the record.
@@ -622,27 +697,24 @@ final class GroqDictateAppModel: ObservableObject {
         }
     }
 
-    private static func postTranscriptReadyNotification(transcript: String, copied: Bool) {
+    private static func postTranscriptReadyNotification(transcript: String) {
         let content = UNMutableNotificationContent()
-        content.title = copied ? IOSAppStrings.Recording.copied : IOSAppStrings.Transcription.readyTapToCopy
+        content.title = IOSAppStrings.Transcription.readyTapToCopy
         content.body = String(transcript.prefix(120))
         content.sound = .default
-        let center = UNUserNotificationCenter.current()
-        // One identifier, so a new notice replaces the last; and it removes
-        // itself once the banner has shown, so nothing is left to clear.
-        center.add(UNNotificationRequest(identifier: transcriptNotificationID, content: content, trigger: nil))
-        Task { @MainActor in
-            let backgroundTask = BackgroundTask(name: "Clear transcript notice")
-            try? await Task.sleep(for: .seconds(6))
-            center.removeDeliveredNotifications(withIdentifiers: [transcriptNotificationID])
-            backgroundTask.end()
-        }
+        // One identifier so a newer notice replaces the last; cleared on
+        // returning to the app or starting a new recording.
+        UNUserNotificationCenter.current().add(
+            UNNotificationRequest(identifier: transcriptNotificationID, content: content, trigger: nil)
+        )
     }
 
     static let transcriptNotificationID = "transcript-ready"
 
     func clearTranscriptNotifications() {
-        UNUserNotificationCenter.current().removeDeliveredNotifications(withIdentifiers: [Self.transcriptNotificationID])
+        let center = UNUserNotificationCenter.current()
+        center.removePendingNotificationRequests(withIdentifiers: [Self.transcriptNotificationID])
+        center.removeDeliveredNotifications(withIdentifiers: [Self.transcriptNotificationID])
     }
 
     /// Store updates can arrive out of order; the newer saved copy wins.
@@ -658,6 +730,32 @@ final class GroqDictateAppModel: ObservableObject {
 
     private static func diagnosticCode(_ error: Error) -> Int {
         (error as? AudioCaptureService.CaptureError)?.code ?? (error as NSError).code
+    }
+}
+
+struct PendingClipboardCopy: Codable, Equatable {
+    static let lifetime: TimeInterval = 60 * 60
+
+    let sessionID: UUID
+    let stoppedAt: Date
+
+    func isExpired(at now: Date) -> Bool {
+        now.timeIntervalSince(stoppedAt) > Self.lifetime
+    }
+
+    func save(to defaults: UserDefaults, key: String) {
+        if let data = try? JSONEncoder().encode(self) {
+            defaults.set(data, forKey: key)
+        }
+    }
+
+    static func load(from defaults: UserDefaults, key: String) -> PendingClipboardCopy? {
+        guard let data = defaults.data(forKey: key) else { return nil }
+        return try? JSONDecoder().decode(PendingClipboardCopy.self, from: data)
+    }
+
+    static func clear(from defaults: UserDefaults, key: String) {
+        defaults.removeObject(forKey: key)
     }
 }
 

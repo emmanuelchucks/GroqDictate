@@ -67,6 +67,24 @@ final class RecordingLifecycleAndPromptTests: XCTestCase {
         XCTAssertNil(GroqDictateAppModel.automaticClipboardText(for: session, fixes: fixes))
     }
 
+    func testPendingClipboardCopyPersistsAndExpiresAfterLifetime() throws {
+        let suiteName = "PendingClipboardCopyTests.\(UUID().uuidString)"
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: suiteName))
+        defer { defaults.removePersistentDomain(forName: suiteName) }
+
+        let key = "pending-clipboard-copy"
+        let stoppedAt = Date(timeIntervalSince1970: 1_700_000_000)
+        let pending = PendingClipboardCopy(sessionID: UUID(), stoppedAt: stoppedAt)
+
+        pending.save(to: defaults, key: key)
+        XCTAssertEqual(PendingClipboardCopy.load(from: defaults, key: key), pending)
+        XCTAssertFalse(pending.isExpired(at: stoppedAt.addingTimeInterval(PendingClipboardCopy.lifetime - 1)))
+        XCTAssertTrue(pending.isExpired(at: stoppedAt.addingTimeInterval(PendingClipboardCopy.lifetime + 1)))
+
+        PendingClipboardCopy.clear(from: defaults, key: key)
+        XCTAssertNil(PendingClipboardCopy.load(from: defaults, key: key))
+    }
+
     func testOnlyAPausedRecordingCanStartOneResume() {
         var lifecycle = RecordingLifecycle.interrupted
 

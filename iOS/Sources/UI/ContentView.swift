@@ -191,10 +191,12 @@ struct ContentView: View {
                           iconColor: .transcribing, detail: duration, detailIsDuration: true)
         case .complete where session.transcript.isEmpty:
             return Status(title: IOSAppStrings.Errors.noSpeechDetected, detail: duration, detailIsDuration: true)
-        case .complete:
-            return Status(title: model.copiedSessionID == session.id ? IOSAppStrings.Recording.copied : IOSAppStrings.Recording.ready,
-                          icon: model.copiedSessionID == session.id ? "checkmark.circle.fill" : nil,
+        case .complete where model.copiedSessionID == session.id:
+            return Status(title: IOSAppStrings.Recording.copied,
+                          icon: "checkmark.circle.fill",
                           iconColor: .green, detail: duration, detailIsDuration: true)
+        case .complete:
+            return Status(title: IOSAppStrings.Recording.ready)
         case .failed:
             let reason = session.segments.first { $0.state == .failed }?.lastError
             return Status(title: IOSAppStrings.Recording.notTranscribed, icon: "exclamationmark.circle.fill",
